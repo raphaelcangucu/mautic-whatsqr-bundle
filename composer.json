@@ -1,0 +1,24 @@
+{
+    "name": "raphaelcangucu/mautic-whatsqr-bundle",
+    "description": "Non-official WhatsApp channel for Mautic, paired by QR code and served by the Meta bundle seams.",
+    "type": "mautic-plugin",
+    "license": "GPL-3.0-or-later",
+    "require": {
+        "php": ">=8.2",
+        "mautic/core-lib": "^7.0",
+        "raphaelcangucu/mautic-meta-bundle": "^0.13.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "MauticPlugin\\MauticWhatsQrBundle\\": ""
+        }
+    },
+    "extra": {
+        "install-directory-name": "MauticWhatsQrBundle"
+    },
+    "authors": [
+        {
+            "name": "Raphael Cangucu"
+        }
+    ]
+}
