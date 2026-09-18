@@ -1,0 +1,17 @@
+[Unit]
+Description=WhatsQR — sessoes de WhatsApp por QR Code
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/whatsqr
+ExecStart=%h/whatsqr/whatsqr -config %h/whatsqr/whatsqr.json
+Restart=always
+RestartSec=5
+# Faz o SQLite da sessao nascer inacessivel para os outros sem depender de alguem
+# lembrar do chmod. Aquele arquivo fala pelo numero de WhatsApp de quem pareou.
+UMask=0077
+
+[Install]
+WantedBy=default.target
