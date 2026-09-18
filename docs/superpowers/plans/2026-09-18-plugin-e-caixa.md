@@ -253,7 +253,11 @@ Os E2E do plano 2 provaram o serviço sozinho. Estes provam Mautic incluído.
 - [ ] **E2E 1** — parear pela tela de Conexões, não por `curl`. O QR aparece, o aparelho escaneia, a tela vira "conectado" **sozinha**.
 - [ ] **E2E 2** — mandar uma mensagem de outro celular. *Conferir:* aparece na caixa junto das conversas dos canais oficiais, com o selo `QR`, e **o push chega no aparelho**. O push é o que prova que o `messagePersisted()` foi chamado de verdade.
 - [ ] **E2E 3** — responder pela caixa, no celular. *Conferir:* a bolha aparece na hora (a UI otimista vale para este canal também) e a mensagem chega no outro aparelho.
-- [ ] **E2E 4 — o mais importante.** Pôr o aparelho pareado em modo avião. Responder pela caixa. *Conferir:* a bolha diz **"na fila"**, e não "não saiu". Tirar do modo avião. *Conferir:* sai sozinha, e **na ordem certa** se houver mais de uma.
+- [ ] **E2E 4 — o mais importante.** Pôr o aparelho pareado em modo avião. Responder pela caixa **três vezes**. *Conferir:* as bolhas dizem **"na fila"**, e não "não saiu". Tirar do modo avião. *Conferir:* saem sozinhas e **na ordem certa**.
+
+  **E medir quanto tempo levam.** A ordem por conversa do plano 1 foi resolvida dentro do `findDue()`, e isso tem um custo conhecido: duas mensagens vencidas da mesma conversa não saem no mesmo lote — a segunda espera a varredura seguinte. Se a varredura for de minuto em minuto, três respostas represadas gotejam por três minutos, e o desenho promete que elas saiam quando o número voltar.
+  
+  Anote o tempo real. Se o gotejar incomodar, a correção é no laço de despacho da `OutboundQueue` — deixar a conversa seguir no mesmo lote depois que o job anterior termina —, e aí vira tarefa do plano 1. **Medir primeiro**: com três respostas pode ser irrelevante; com quinze não é.
 - [ ] **E2E 5** — mandar uma **foto**. *Conferir:* aparece como mensagem não suportada com o texto explicando, e não some nem vira anexo quebrado.
 - [ ] **E2E 6 — o que protege quem pediu para sair.** Marcar um contato como opt-out e tentar responder por um número QR. *Conferir:* **recusado**. Este é o teste que prova que o `assertCanSend` não se perdeu no caminho — a regressão que a interface larga teria introduzido.
 - [ ] **Passo final: escrever o resultado de cada um**, com data e número usado.
