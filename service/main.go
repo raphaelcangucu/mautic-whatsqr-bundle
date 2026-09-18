@@ -21,9 +21,6 @@ import (
 	"syscall"
 	"time"
 
-	"go.mau.fi/whatsmeow/types"
-	waLog "go.mau.fi/whatsmeow/util/log"
-
 	"github.com/macro-markets/whatsqr/api"
 	"github.com/macro-markets/whatsqr/session"
 	"github.com/macro-markets/whatsqr/webhook"
@@ -51,9 +48,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	logger := waLog.Stdout("whatsmeow", cfg.LogLevel, false)
-
-	store, err := session.OpenStore(ctx, cfg.StorePath, logger)
+	store, err := session.OpenStore(ctx, cfg.StorePath, session.StdoutLogger(cfg.LogLevel))
 	if err != nil {
 		return err
 	}
@@ -72,10 +67,8 @@ func run() error {
 	})
 	defer sender.Close()
 
-	devices := &deviceIndex{store: store}
-
 	manager := session.NewManager(
-		dialer(ctx, dir, devices),
+		dialer(ctx, dir, store),
 		session.Options{Notify: notifier(dir, sender)},
 	)
 	defer manager.Shutdown()
@@ -83,12 +76,12 @@ func run() error {
 	// Antes de escutar, e nao depois: subir a porta primeiro deixaria uma
 	// janela em que /health responde com a lista vazia e a tela de Conexoes
 	// mostra cinco numeros desligados que na verdade estao voltando.
-	restore(ctx, manager, dir)
+	restore(ctx, manager, store, dir)
 
 	server := api.NewServer(api.Options{
 		Manager:     manager,
 		Token:       cfg.Token,
-		Credentials: devices,
+		Credentials: store,
 		Directory:   dir,
 		HasSecret:   cfg.HasSecret,
 	})
@@ -152,9 +145,14 @@ func notifier(dir *directory, sender *webhook.Sender) func(session.Notice) {
 }
 
 // dialer e a fabrica de clientes do gerente. E aqui que o id de sessao vira
-// aparelho: o de-para diz qual chip e daquele id, e o store abre a
-// credencial daquele chip.
-func dialer(ctx context.Context, dir *directory, devices *deviceIndex) func(string) (session.Client, error) {
+// credencial: o de-para diz qual numero e daquele id, e o store abre a
+// credencial daquele numero.
+//
+// O JID viaja na forma que o resto do servico fala -- a mesma que sai nos
+// eventos e que o de-para guarda. Traduzi-la para o indice do whatsmeow e
+// trabalho do session/whatsmeow.go, e e por isso que este arquivo nao
+// importa nada da biblioteca.
+func dialer(ctx context.Context, dir *directory, store *session.WhatsmeowStore) func(string) (session.Client, error) {
 	return func(id string) (session.Client, error) {
 		jid, bound, err := dir.JID(id)
 		if err != nil {
@@ -162,36 +160,37 @@ func dialer(ctx context.Context, dir *directory, devices *deviceIndex) func(stri
 		}
 		if !bound {
 			// Sessao que nunca pareou: aparelho novo, que vai pedir QR.
-			return devices.store.Open(ctx, "")
+			return store.Open(ctx, "")
 		}
 
-		device, found, err := devices.resolve(ctx, jid)
+		client, err := store.Open(ctx, jid)
 		if err != nil {
-			return nil, err
-		}
-		if !found {
-			// O de-para diz que esta sessao e de um chip, e a credencial
-			// dele sumiu do disco. Abrir um aparelho novo aqui seria a
-			// sessao voltando a pedir QR e aceitando qualquer chip -- o
-			// buraco que a regra do JID existe para tapar, reaberto pelo
-			// caminho de tras. Quem quer parear outro chip apaga a sessao
-			// primeiro, que e um gesto explicito.
+			// O de-para diz que esta sessao e de um numero, e a credencial
+			// dele nao esta la para ser aberta. Cair para aparelho novo
+			// aqui seria a sessao voltando a pedir QR e aceitando qualquer
+			// chip -- o buraco que a regra do JID existe para tapar,
+			// reaberto pelo caminho de tras. Quem quer parear outro chip
+			// apaga a sessao primeiro, que e um gesto explicito.
 			return nil, fmt.Errorf(
-				"a sessao %s pareou com %s e essa credencial nao esta mais no disco; apague a sessao (DELETE /sessions/%s) antes de parear outro chip",
-				id, jid, id)
+				"a sessao %s pareou com %s e essa credencial nao esta disponivel (%w); apague a sessao (DELETE /sessions/%s) antes de parear outro chip",
+				id, jid, err, id)
 		}
-		return devices.store.Open(ctx, device)
+		return client, nil
 	}
 }
 
 // restore religa o que ja estava pareado. E o que faz o reinicio nao pedir
 // QR de novo: cada sessao do de-para abre com a credencial do disco, e o
 // gerente, ao ver um cliente sem QR e com chip, ja a da por conectada.
-func restore(ctx context.Context, manager *session.Manager, dir *directory) {
+func restore(ctx context.Context, manager *session.Manager, store *session.WhatsmeowStore, dir *directory) {
 	bindings, err := dir.All()
 	if err != nil {
 		log.Printf("whatsqr: nao consegui ler o de-para; nenhuma sessao foi religada: %v", err)
 		return
+	}
+	claimed := make(map[string]bool, len(bindings))
+	for _, b := range bindings {
+		claimed[b.JID] = true
 	}
 	for _, b := range bindings {
 		if ctx.Err() != nil {
@@ -210,60 +209,20 @@ func restore(ctx context.Context, manager *session.Manager, dir *directory) {
 		}
 		log.Printf("whatsqr: sessao %s religada em %s, sem pedir QR", b.SessionID, snap.JID)
 	}
-}
 
-// deviceIndex traduz entre os dois jeitos de escrever o mesmo numero.
-//
-// O whatsmeow indexa aparelhos pelo JID com aparelho dentro
-// (5511999999999.0:12@s.whatsapp.net), e e assim que Devices() os lista e
-// que Open() e Forget() os esperam. Os eventos da sessao, por outro lado,
-// carregam o JID do numero, sem aparelho -- e e esse que o state.go compara
-// e que o de-para guarda, porque e ele que identifica o chip e nao a
-// instalacao.
-//
-// A traducao mora aqui, e nao no pacote api, para que as rotas continuem
-// sem saber que existe whatsmeow.
-type deviceIndex struct {
-	store *session.WhatsmeowStore
-}
-
-// resolve acha o aparelho daquele numero entre os que estao no disco.
-func (x *deviceIndex) resolve(ctx context.Context, jid string) (string, bool, error) {
-	wanted, err := types.ParseJID(jid)
+	// Credencial sem dono e um numero que ainda pode falar e que sessao
+	// nenhuma reivindica -- sobra de um DELETE que falhou no meio, ou de um
+	// de-para apagado a mao. Ninguem notaria sem este aviso.
+	devices, err := store.Devices(ctx)
 	if err != nil {
-		return "", false, fmt.Errorf("jid %q: %w", jid, err)
+		log.Printf("whatsqr: nao consegui listar as credenciais do disco: %v", err)
+		return
 	}
-	devices, err := x.store.Devices(ctx)
-	if err != nil {
-		return "", false, err
-	}
-	for _, device := range devices {
-		parsed, err := types.ParseJID(device)
-		if err != nil {
-			continue
-		}
-		// A comparacao e feita na forma sem aparelho dos dois lados: o
-		// numero do chip e o mesmo, o aparelho e detalhe da instalacao.
-		if parsed.ToNonAD().String() == wanted.ToNonAD().String() {
-			return device, true, nil
+	for _, jid := range devices {
+		if !claimed[jid] {
+			log.Printf("whatsqr: ha credencial no disco para %s e nenhuma sessao a reivindica -- ela ainda fala por esse numero", jid)
 		}
 	}
-	return "", false, nil
-}
-
-// Forget e o que a rota de apagar chama. Recebe o JID do numero e some com
-// a credencial do aparelho correspondente.
-func (x *deviceIndex) Forget(ctx context.Context, jid string) error {
-	device, found, err := x.resolve(ctx, jid)
-	if err != nil {
-		return err
-	}
-	if !found {
-		// Ja nao esta la. Apagar o que nao existe nao e erro: o DELETE
-		// precisa poder ser repetido.
-		return nil
-	}
-	return x.store.Forget(ctx, device)
 }
 
 // protectStore fecha a permissao do arquivo de sessoes.

@@ -24,10 +24,20 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Este e o unico arquivo do pacote que conhece o whatsmeow, e e a borda:
-// nao tem teste de unidade porque testa-lo exigiria um WhatsApp de verdade.
-// O que da para errar aqui aparece nos testes de ponta a ponta, num numero
-// que pode ser banido.
+// Este e o unico arquivo do pacote que conhece o whatsmeow, e e a borda.
+// O cliente nao tem teste de unidade porque testa-lo exigiria um WhatsApp
+// de verdade; o que da para errar nele aparece nos testes de ponta a ponta,
+// num numero que pode ser banido. O store tem: abrir aparelho e achar
+// credencial nao fala com o WhatsApp, e e o que o whatsmeow_test.go cobre.
+//
+// Aqui tambem moram os dois jeitos de escrever o mesmo numero, e essa e a
+// razao de eles nao aparecerem em lugar nenhum acima desta linha. O
+// whatsmeow indexa credenciais pelo JID COM aparelho dentro
+// (5511999999999:12@s.whatsapp.net); os eventos, o Notice e o state.go
+// falam a forma SEM aparelho (5511999999999@s.whatsapp.net), porque e ela
+// que identifica o chip, e nao a instalacao. Qual das duas usar e detalhe
+// do protocolo do WhatsApp, e protocolo mora na borda: o resto do servico
+// entrega e recebe a forma sem aparelho, e a traducao acontece aqui.
 
 // filaDeEventos e o tamanho do buffer entre o whatsmeow e o gerente. O
 // whatsmeow chama os handlers na propria goroutine que le o socket, entao
@@ -49,6 +59,23 @@ const firstQRTimeout = 30 * time.Second
 type WhatsmeowStore struct {
 	container *sqlstore.Container
 	log       waLog.Logger
+}
+
+// StdoutLogger monta o log da biblioteca a partir do nivel escrito na
+// configuracao: DEBUG, INFO, WARN ou ERROR.
+//
+// Existe para que quem sobe o servico escolha o nivel sem precisar nomear o
+// tipo de log do whatsmeow -- ou seja, sem importar a biblioteca. Sem ele,
+// o main precisaria de um import so para construir este argumento, e a
+// fronteira que este arquivo guarda cairia pelo lado mais bobo possivel.
+//
+// Sem cor: quem le isto e o journal do systemd, e la o codigo de escape
+// vira lixo no meio da linha.
+func StdoutLogger(level string) waLog.Logger {
+	if level == "" {
+		level = "WARN"
+	}
+	return waLog.Stdout("whatsmeow", level, false)
 }
 
 // OpenStore abre (e migra) o arquivo de sessoes.
@@ -80,56 +107,133 @@ func (s *WhatsmeowStore) Devices(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Sai a forma sem aparelho, que e a que o servico fala: assim a lista
+	// pode ser comparada direto com o que o de-para guardou, sem ninguem la
+	// fora precisar saber que existe forma com aparelho.
+	//
+	// Repetido nao aparece duas vezes -- a lista e de numeros, e um numero
+	// com duas credenciais continua sendo um numero. Quem cobra essa
+	// duplicidade e devicesOf, que e quem precisa escolher uma.
+	seen := make(map[string]struct{}, len(devices))
 	jids := make([]string, 0, len(devices))
 	for _, a := range devices {
-		if a.ID != nil {
-			jids = append(jids, a.ID.String())
+		if a.ID == nil {
+			continue
 		}
+		jid := a.ID.ToNonAD().String()
+		if _, dup := seen[jid]; dup {
+			continue
+		}
+		seen[jid] = struct{}{}
+		jids = append(jids, jid)
 	}
 	return jids, nil
 }
 
-// Open devolve o cliente de um aparelho. JID vazio e aparelho novo, que vai
+// ErrAmbiguousJID e o numero que tem mais de uma credencial no disco.
+// Sentinela porque nao e falta de credencial nem erro de digitacao: e uma
+// escolha que este arquivo se recusa a fazer sozinho.
+var ErrAmbiguousJID = errors.New("session: mais de uma credencial para o mesmo numero")
+
+// Open devolve o cliente de um numero. JID vazio e aparelho novo, que vai
 // pedir QR; JID preenchido e a sessao que ja estava no disco.
 //
-// O de-para entre o id de sessao do servico e o JID do aparelho nao esta
-// aqui de proposito: e da camada que guarda a configuracao. Este arquivo so
-// sabe abrir aparelho.
+// O JID entra na forma sem aparelho -- a mesma que sai nos eventos e que o
+// de-para guarda. A forma com aparelho tambem e aceita, porque ela ainda e
+// o indice de verdade e ha um caminho direto para ela.
+//
+// O de-para entre o id de sessao do servico e o JID nao esta aqui de
+// proposito: e da camada que guarda a configuracao. Este arquivo so sabe
+// achar credencial e abrir aparelho.
 func (s *WhatsmeowStore) Open(ctx context.Context, jid string) (Client, error) {
-	var device *store.Device
 	if jid == "" {
-		device = s.container.NewDevice()
-	} else {
-		parsed, err := types.ParseJID(jid)
-		if err != nil {
-			return nil, fmt.Errorf("session: jid %q: %w", jid, err)
-		}
-		device, err = s.container.GetDevice(ctx, parsed)
+		return newWhatsmeowClient(s.container.NewDevice(), s.log), nil
+	}
+	found, err := s.devicesOf(ctx, jid)
+	if err != nil {
+		return nil, err
+	}
+	switch len(found) {
+	case 0:
+		return nil, fmt.Errorf("session: o numero %q nao tem credencial no store", jid)
+	case 1:
+		return newWhatsmeowClient(found[0], s.log), nil
+	}
+	// Escolher uma das duas aqui seria abrir a credencial errada em metade
+	// das vezes, calado. Recusar e a unica saida que nao inventa uma
+	// decisao que nao e deste arquivo.
+	return nil, fmt.Errorf("%w: %s tem %d credenciais no disco (%s)",
+		ErrAmbiguousJID, jid, len(found), strings.Join(deviceIDs(found), ", "))
+}
+
+// devicesOf acha as credenciais daquele numero. E a traducao de dialeto
+// propriamente dita: um JID com aparelho e uma busca direta no indice; um
+// sem aparelho e uma varredura comparando os dois lados na forma sem
+// aparelho, que e a definicao que a propria biblioteca da de "mesmo
+// numero".
+//
+// A varredura custa a lista inteira de credenciais. Sao ate cinco numeros,
+// e o alternativo seria um LIKE sobre a coluna jid -- consulta que depende
+// do formato do JID em texto e que quebra calada no dia em que a biblioteca
+// mudar esse formato.
+func (s *WhatsmeowStore) devicesOf(ctx context.Context, jid string) ([]*store.Device, error) {
+	parsed, err := types.ParseJID(jid)
+	if err != nil {
+		return nil, fmt.Errorf("session: jid %q: %w", jid, err)
+	}
+	if parsed.Device != 0 || parsed.RawAgent != 0 {
+		device, err := s.container.GetDevice(ctx, parsed)
 		if err != nil {
 			return nil, fmt.Errorf("session: buscando o aparelho %q: %w", jid, err)
 		}
 		if device == nil {
-			return nil, fmt.Errorf("session: aparelho %q nao esta no store", jid)
+			return nil, nil
+		}
+		return []*store.Device{device}, nil
+	}
+
+	all, err := s.container.GetAllDevices(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("session: listando os aparelhos: %w", err)
+	}
+	wanted := parsed.ToNonAD().String()
+	var found []*store.Device
+	for _, device := range all {
+		if device.ID != nil && device.ID.ToNonAD().String() == wanted {
+			found = append(found, device)
 		}
 	}
-	return newWhatsmeowClient(device, s.log), nil
+	return found, nil
 }
 
-// Forget apaga o aparelho do disco. E o que faz DELETE /sessions nao deixar
-// para tras uma credencial que ainda fala pelo numero.
-func (s *WhatsmeowStore) Forget(ctx context.Context, jid string) error {
-	parsed, err := types.ParseJID(jid)
-	if err != nil {
-		return fmt.Errorf("session: jid %q: %w", jid, err)
+func deviceIDs(devices []*store.Device) []string {
+	ids := make([]string, 0, len(devices))
+	for _, device := range devices {
+		ids = append(ids, device.ID.String())
 	}
-	device, err := s.container.GetDevice(ctx, parsed)
+	return ids
+}
+
+// Forget apaga do disco a credencial daquele numero. E o que faz DELETE
+// /sessions nao deixar para tras uma credencial que ainda fala pelo numero.
+//
+// Ao contrario de Open, aqui um numero com duas credenciais nao vira
+// recusa: apaga as duas. A frase acima e o contrato, e deixar a segunda no
+// disco seria cumprir metade dele -- justamente a metade que importa.
+//
+// Apagar o que nao esta la nao e erro: o DELETE precisa poder ser repetido
+// depois de uma falha no meio.
+func (s *WhatsmeowStore) Forget(ctx context.Context, jid string) error {
+	found, err := s.devicesOf(ctx, jid)
 	if err != nil {
 		return err
 	}
-	if device == nil {
-		return nil
+	for _, device := range found {
+		if err := s.container.DeleteDevice(ctx, device); err != nil {
+			return fmt.Errorf("session: apagando o aparelho %s: %w", device.ID, err)
+		}
 	}
-	return s.container.DeleteDevice(ctx, device)
+	return nil
 }
 
 // Close fecha o arquivo.

@@ -254,8 +254,7 @@ func TestDialingLeansOnTheMappingAndRefusesAVanishedCredential(t *testing.T) {
 	}
 	defer dir.Close()
 
-	devices := &deviceIndex{store: store}
-	dial := dialer(ctx, dir, devices)
+	dial := dialer(ctx, dir, store)
 
 	// Sessao que nunca pareou: aparelho novo, que vai pedir QR.
 	client, err := dial("numero-novo")
@@ -283,7 +282,7 @@ func TestDialingLeansOnTheMappingAndRefusesAVanishedCredential(t *testing.T) {
 
 	// Apagar o que nao esta la nao e erro: o DELETE precisa poder ser
 	// repetido depois de uma falha no meio.
-	if err := devices.Forget(ctx, testJID); err != nil {
+	if err := store.Forget(ctx, testJID); err != nil {
 		t.Errorf("Forget de credencial inexistente: %v", err)
 	}
 }
