@@ -33,12 +33,12 @@ import (
 // whatsmeow chama os handlers na propria goroutine que le o socket, entao
 // segurar um handler segura a conexao inteira. O buffer da folga para o
 // gerente aplicar a transicao sem que a leitura do socket espere.
-const filaDeEventos = 64
+const eventBuffer = 64
 
 // esperaDoPrimeiroQr e quanto se espera pelo primeiro QR antes de desistir.
 // A rota POST /sessions responde dentro da requisicao: sem prazo aqui, um
 // WhatsApp mudo deixaria o atendente olhando uma tela girando.
-const esperaDoPrimeiroQr = 30 * time.Second
+const firstQRTimeout = 30 * time.Second
 
 // WhatsmeowStore e o arquivo SQLite onde as sessoes moram. Um arquivo para
 // todos os numeros: o whatsmeow guarda um aparelho por JID dentro dele.
@@ -52,7 +52,7 @@ type WhatsmeowStore struct {
 }
 
 // OpenStore abre (e migra) o arquivo de sessoes.
-func OpenStore(ctx context.Context, caminho string, log waLog.Logger) (*WhatsmeowStore, error) {
+func OpenStore(ctx context.Context, path string, log waLog.Logger) (*WhatsmeowStore, error) {
 	if log == nil {
 		log = waLog.Noop
 	}
@@ -62,11 +62,11 @@ func OpenStore(ctx context.Context, caminho string, log waLog.Logger) (*Whatsmeo
 	// esquema do whatsmeow depende delas para limpar sessao antiga, e
 	// busy_timeout porque o arquivo e tocado por varias sessoes ao mesmo
 	// tempo e "database is locked" aqui e uma sessao que cai.
-	endereco := fmt.Sprintf(
+	address := fmt.Sprintf(
 		"file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate",
-		caminho,
+		path,
 	)
-	container, err := sqlstore.New(ctx, "sqlite", endereco, log)
+	container, err := sqlstore.New(ctx, "sqlite", address, log)
 	if err != nil {
 		return nil, fmt.Errorf("session: abrindo o store: %w", err)
 	}
@@ -76,12 +76,12 @@ func OpenStore(ctx context.Context, caminho string, log waLog.Logger) (*Whatsmeo
 // Devices lista os JIDs ja pareados. E por aqui que o servico sabe quais
 // sessoes religar depois de um reinicio, sem pedir QR de novo.
 func (s *WhatsmeowStore) Devices(ctx context.Context) ([]string, error) {
-	aparelhos, err := s.container.GetAllDevices(ctx)
+	devices, err := s.container.GetAllDevices(ctx)
 	if err != nil {
 		return nil, err
 	}
-	jids := make([]string, 0, len(aparelhos))
-	for _, a := range aparelhos {
+	jids := make([]string, 0, len(devices))
+	for _, a := range devices {
 		if a.ID != nil {
 			jids = append(jids, a.ID.String())
 		}
@@ -95,24 +95,24 @@ func (s *WhatsmeowStore) Devices(ctx context.Context) ([]string, error) {
 // O de-para entre o id de sessao do servico e o JID do aparelho nao esta
 // aqui de proposito: e da camada que guarda a configuracao. Este arquivo so
 // sabe abrir aparelho.
-func (s *WhatsmeowStore) Open(ctx context.Context, jid string) (Cliente, error) {
-	var aparelho *store.Device
+func (s *WhatsmeowStore) Open(ctx context.Context, jid string) (Client, error) {
+	var device *store.Device
 	if jid == "" {
-		aparelho = s.container.NewDevice()
+		device = s.container.NewDevice()
 	} else {
 		parsed, err := types.ParseJID(jid)
 		if err != nil {
 			return nil, fmt.Errorf("session: jid %q: %w", jid, err)
 		}
-		aparelho, err = s.container.GetDevice(ctx, parsed)
+		device, err = s.container.GetDevice(ctx, parsed)
 		if err != nil {
 			return nil, fmt.Errorf("session: buscando o aparelho %q: %w", jid, err)
 		}
-		if aparelho == nil {
+		if device == nil {
 			return nil, fmt.Errorf("session: aparelho %q nao esta no store", jid)
 		}
 	}
-	return novoWhatsmeow(aparelho, s.log), nil
+	return newWhatsmeowClient(device, s.log), nil
 }
 
 // Forget apaga o aparelho do disco. E o que faz DELETE /sessions nao deixar
@@ -122,30 +122,30 @@ func (s *WhatsmeowStore) Forget(ctx context.Context, jid string) error {
 	if err != nil {
 		return fmt.Errorf("session: jid %q: %w", jid, err)
 	}
-	aparelho, err := s.container.GetDevice(ctx, parsed)
+	device, err := s.container.GetDevice(ctx, parsed)
 	if err != nil {
 		return err
 	}
-	if aparelho == nil {
+	if device == nil {
 		return nil
 	}
-	return s.container.DeleteDevice(ctx, aparelho)
+	return s.container.DeleteDevice(ctx, device)
 }
 
 // Close fecha o arquivo.
 func (s *WhatsmeowStore) Close() error { return s.container.Close() }
 
-// whatsmeowCliente implementa Cliente com a biblioteca de verdade.
-type whatsmeowCliente struct {
-	cli     *whatsmeow.Client
-	eventos chan Evento
+// whatsmeowClient implementa Client com a biblioteca de verdade.
+type whatsmeowClient struct {
+	cli    *whatsmeow.Client
+	outbox chan Event
 
-	// fim e fechado por Desconectar. Todo envio para o canal de eventos
+	// stopped e fechado por Disconnect. Todo envio para o canal de eventos
 	// escuta ele tambem: sem isso, um handler do whatsmeow ficaria preso
 	// tentando entregar evento para um gerente que ja foi embora, e com ele
 	// a goroutine que le o socket.
-	fim   chan struct{}
-	fecha sync.Once
+	stopped  chan struct{}
+	stopOnce sync.Once
 
 	mu sync.Mutex
 	qr string
@@ -159,35 +159,35 @@ type whatsmeowCliente struct {
 	// proprio whatsmeow faz em seguida. Essa queda e do protocolo, nao da
 	// linha do cliente, e anuncia-la faria a tela piscar "reconectando"
 	// no segundo seguinte ao scan.
-	pareando bool
+	pairing bool
 	// caiu diz se houve queda de verdade desde a ultima conexao. E o que
 	// separa o Connected que e volta do Connected que e so a conexao
 	// inicial -- e e por isso que a distincao entre EventPaired e
 	// EventResumed pode ser feita aqui, na borda, e nao no gerente.
-	caiu bool
+	dropped bool
 }
 
-func novoWhatsmeow(aparelho *store.Device, log waLog.Logger) *whatsmeowCliente {
-	cli := whatsmeow.NewClient(aparelho, log)
+func newWhatsmeowClient(device *store.Device, log waLog.Logger) *whatsmeowClient {
+	cli := whatsmeow.NewClient(device, log)
 	// Reconexao automatica ligada: a queda e rotina neste canal, e o
 	// whatsmeow volta sozinho. Quem decide quando desistir continua sendo a
 	// janela do state.go, cobrada pelo gerente.
 	cli.EnableAutoReconnect = true
-	c := &whatsmeowCliente{
+	c := &whatsmeowClient{
 		cli:     cli,
-		eventos: make(chan Evento, filaDeEventos),
-		fim:     make(chan struct{}),
+		outbox:  make(chan Event, eventBuffer),
+		stopped: make(chan struct{}),
 	}
-	if aparelho.ID != nil {
-		c.jid = aparelho.ID.ToNonAD().String()
+	if device.ID != nil {
+		c.jid = device.ID.ToNonAD().String()
 	}
 	return c
 }
 
-func (c *whatsmeowCliente) Conectar(ctx context.Context) (<-chan Evento, error) {
+func (c *whatsmeowClient) Connect(ctx context.Context) (<-chan Event, error) {
 	var qrChan <-chan whatsmeow.QRChannelItem
-	novo := c.cli.Store.ID == nil
-	if novo {
+	isNew := c.cli.Store.ID == nil
+	if isNew {
 		// GetQRChannel tem que vir antes de Connect: e ele que assina os
 		// eventos de pareamento.
 		var err error
@@ -197,99 +197,99 @@ func (c *whatsmeowCliente) Conectar(ctx context.Context) (<-chan Evento, error) 
 		}
 	}
 
-	c.cli.AddEventHandler(c.traduzir)
+	c.cli.AddEventHandler(c.translate)
 
 	if err := c.cli.Connect(); err != nil {
 		return nil, fmt.Errorf("session: conectando: %w", err)
 	}
 
-	if novo {
-		if err := c.primeiroQr(ctx, qrChan); err != nil {
+	if isNew {
+		if err := c.firstQR(ctx, qrChan); err != nil {
 			c.cli.Disconnect()
 			return nil, err
 		}
-		go c.seguirQr(qrChan)
+		go c.followQR(qrChan)
 	}
-	return c.eventos, nil
+	return c.outbox, nil
 }
 
 // primeiroQr espera o codigo que a resposta de POST /sessions precisa
-// carregar. A interface promete que, quando Conectar volta, ou ha QR ou ha
+// carregar. A interface promete que, quando Connect volta, ou ha QR ou ha
 // chip -- e e aqui que essa promessa e paga.
-func (c *whatsmeowCliente) primeiroQr(ctx context.Context, qrChan <-chan whatsmeow.QRChannelItem) error {
-	prazo, cancelar := context.WithTimeout(ctx, esperaDoPrimeiroQr)
-	defer cancelar()
+func (c *whatsmeowClient) firstQR(ctx context.Context, qrChan <-chan whatsmeow.QRChannelItem) error {
+	deadline, cancel := context.WithTimeout(ctx, firstQRTimeout)
+	defer cancel()
 	for {
 		select {
-		case item, aberto := <-qrChan:
-			if !aberto {
+		case item, ok := <-qrChan:
+			if !ok {
 				return errors.New("session: o canal de qr fechou antes do primeiro codigo")
 			}
 			if item.Event == whatsmeow.QRChannelEventCode {
-				c.guardarQr(item.Code)
+				c.setQR(item.Code)
 				return nil
 			}
 			if item.Error != nil {
 				return fmt.Errorf("session: pareamento: %w", item.Error)
 			}
 			return fmt.Errorf("session: pareamento terminou em %q antes do primeiro codigo", item.Event)
-		case <-prazo.Done():
-			return fmt.Errorf("session: sem qr depois de %s: %w", esperaDoPrimeiroQr, prazo.Err())
-		case <-c.fim:
+		case <-deadline.Done():
+			return fmt.Errorf("session: sem qr depois de %s: %w", firstQRTimeout, deadline.Err())
+		case <-c.stopped:
 			return ErrSessionClosed
 		}
 	}
 }
 
 // seguirQr acompanha as renovacoes e o desfecho do pareamento.
-func (c *whatsmeowCliente) seguirQr(qrChan <-chan whatsmeow.QRChannelItem) {
+func (c *whatsmeowClient) followQR(qrChan <-chan whatsmeow.QRChannelItem) {
 	for item := range qrChan {
 		switch item.Event {
 		case whatsmeow.QRChannelEventCode:
-			c.guardarQr(item.Code)
+			c.setQR(item.Code)
 		case whatsmeow.QRChannelSuccess.Event:
 			// Quem muda o estado e o PairSuccess; aqui so se apaga o codigo
 			// para a tela nao continuar oferecendo um QR ja usado.
-			c.guardarQr("")
+			c.setQR("")
 		default:
-			c.guardarQr("")
+			c.setQR("")
 			// A tela de pareamento distingue "expirou" de "o WhatsApp
 			// recusou", e so o primeiro oferece tentar de novo. Por isso o
 			// motivo viaja com o desfecho do whatsmeow dentro, em vez de um
 			// "falhou" generico.
-			motivo := item.Event
+			reason := item.Event
 			if item.Error != nil {
-				motivo = fmt.Sprintf("%s: %s", item.Event, item.Error)
+				reason = fmt.Sprintf("%s: %s", item.Event, item.Error)
 			}
-			c.mandar(Evento{Kind: EventFailed, Reason: motivo})
+			c.emit(Event{Kind: EventFailed, Reason: reason})
 		}
 	}
 }
 
-func (c *whatsmeowCliente) guardarQr(qr string) {
+func (c *whatsmeowClient) setQR(qr string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.qr = qr
 }
 
-func (c *whatsmeowCliente) QrAtual() string {
+func (c *whatsmeowClient) CurrentQR() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.qr
 }
 
-func (c *whatsmeowCliente) Jid() string {
+func (c *whatsmeowClient) JID() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.jid
 }
 
-func (c *whatsmeowCliente) EnviarTexto(ctx context.Context, para, texto string) (string, error) {
-	destino, err := paraJID(para)
+func (c *whatsmeowClient) SendText(ctx context.Context, to, text string) (string, error) {
+	dest, err := toJID(to)
 	if err != nil {
 		return "", err
 	}
-	resp, err := c.cli.SendMessage(ctx, destino, &waE2E.Message{Conversation: proto.String(texto)})
+	resp, err := c.cli.SendMessage(ctx, dest, &waE2E.Message{Conversation: proto.String(text)})
 	if err != nil {
 		return "", err
 	}
@@ -304,111 +304,111 @@ func (c *whatsmeowCliente) EnviarTexto(ctx context.Context, para, texto string) 
 // paraJID aceita tanto o JID inteiro quanto o telefone cru que o plugin
 // normalizou, porque os dois aparecem: a resposta a uma conversa tem JID, e
 // um envio novo tem numero.
-func paraJID(para string) (types.JID, error) {
-	if strings.Contains(para, "@") {
-		jid, err := types.ParseJID(para)
+func toJID(to string) (types.JID, error) {
+	if strings.Contains(to, "@") {
+		jid, err := types.ParseJID(to)
 		if err != nil {
-			return types.EmptyJID, fmt.Errorf("session: destino %q: %w", para, err)
+			return types.EmptyJID, fmt.Errorf("session: destino %q: %w", to, err)
 		}
 		return jid, nil
 	}
-	numero := strings.Map(func(r rune) rune {
+	number := strings.Map(func(r rune) rune {
 		if r >= '0' && r <= '9' {
 			return r
 		}
 		return -1
-	}, para)
-	if numero == "" {
-		return types.EmptyJID, fmt.Errorf("session: destino %q nao tem numero", para)
+	}, to)
+	if number == "" {
+		return types.EmptyJID, fmt.Errorf("session: destino %q nao tem numero", to)
 	}
-	return types.NewJID(numero, types.DefaultUserServer), nil
+	return types.NewJID(number, types.DefaultUserServer), nil
 }
 
-func (c *whatsmeowCliente) Desconectar() {
-	c.fecha.Do(func() { close(c.fim) })
+func (c *whatsmeowClient) Disconnect() {
+	c.stopOnce.Do(func() { close(c.stopped) })
 	c.cli.Disconnect()
 }
 
 // mandar entrega o evento ao gerente sem nunca bloquear para sempre.
-func (c *whatsmeowCliente) mandar(ev Evento) {
+func (c *whatsmeowClient) emit(ev Event) {
 	select {
-	case c.eventos <- ev:
-	case <-c.fim:
+	case c.outbox <- ev:
+	case <-c.stopped:
 	}
 }
 
 // traduzir e a fronteira propriamente dita: entra tipo do whatsmeow, sai
-// Evento deste pacote. Nenhuma regra de transicao mora aqui -- o que se
+// Event deste pacote. Nenhuma regra de transicao mora aqui -- o que se
 // decide e apenas qual evento aconteceu, nao o que ele significa para a
 // sessao.
-func (c *whatsmeowCliente) traduzir(raw any) {
+func (c *whatsmeowClient) translate(raw any) {
 	switch evt := raw.(type) {
 	case *events.PairSuccess:
 		jid := evt.ID.ToNonAD().String()
 		c.mu.Lock()
-		c.pareando = true
-		c.caiu = false
+		c.pairing = true
+		c.dropped = false
 		c.jid = jid
 		c.mu.Unlock()
-		c.mandar(Evento{Kind: EventPaired, JID: jid})
+		c.emit(Event{Kind: EventPaired, JID: jid})
 
 	case *events.Connected:
 		c.mu.Lock()
-		pareando, caiu := c.pareando, c.caiu
-		c.pareando = false
-		c.caiu = false
+		pairing, dropped := c.pairing, c.dropped
+		c.pairing = false
+		c.dropped = false
 		c.mu.Unlock()
-		if pareando || !caiu {
+		if pairing || !dropped {
 			// A primeira conexao de uma sessao ja pareada nao e uma volta:
 			// o gerente ja a abriu como conectada. Anuncia-la como volta
 			// seria uma transicao que o state.go recusa com razao.
 			return
 		}
-		c.mandar(Evento{Kind: EventResumed, JID: c.Jid()})
+		c.emit(Event{Kind: EventResumed, JID: c.JID()})
 
 	case *events.Disconnected:
 		c.mu.Lock()
-		pareando := c.pareando
-		if !pareando {
-			c.caiu = true
+		pairing := c.pairing
+		if !pairing {
+			c.dropped = true
 		}
 		c.mu.Unlock()
-		if pareando {
+		if pairing {
 			// Queda do proprio handshake de pareamento, nao da linha.
 			return
 		}
-		c.mandar(Evento{Kind: EventDropped})
+		c.emit(Event{Kind: EventDropped})
 
 	case *events.LoggedOut:
-		c.mandar(Evento{Kind: EventLoggedOut, Reason: evt.Reason.String()})
+		c.emit(Event{Kind: EventLoggedOut, Reason: evt.Reason.String()})
 
 	case *events.StreamReplaced:
 		// Outro cliente assumiu a sessao. Nao adianta esperar: enquanto o
 		// outro estiver de pe, este nao volta.
-		c.mandar(Evento{Kind: EventFailed, Reason: "a sessao foi assumida por outro cliente"})
+		c.emit(Event{Kind: EventFailed, Reason: "a sessao foi assumida por outro cliente"})
 
 	case *events.TemporaryBan:
-		c.mandar(Evento{Kind: EventFailed, Reason: evt.String()})
+		c.emit(Event{Kind: EventFailed, Reason: evt.String()})
 
 	case *events.ClientOutdated:
-		c.mandar(Evento{Kind: EventFailed, Reason: "versao do cliente recusada pelo WhatsApp"})
+		c.emit(Event{Kind: EventFailed, Reason: "versao do cliente recusada pelo WhatsApp"})
 
 	case *events.ConnectFailure:
-		c.mandar(Evento{Kind: EventFailed, Reason: fmt.Sprintf("%s: %s", evt.Reason, evt.Message)})
+		c.emit(Event{Kind: EventFailed, Reason: fmt.Sprintf("%s: %s", evt.Reason, evt.Message)})
 
 	case *events.Message:
-		if msg := traduzirMensagem(evt); msg != nil {
-			c.mandar(Evento{Kind: EventMessage, Message: msg})
+		if msg := translateMessage(evt); msg != nil {
+			c.emit(Event{Kind: EventMessage, Message: msg})
 		}
 
 	case *events.Receipt:
-		for _, ev := range traduzirRecibo(evt) {
-			c.mandar(ev)
+		for _, ev := range translateReceipt(evt) {
+			c.emit(ev)
 		}
 	}
 }
 
-func traduzirMensagem(evt *events.Message) *Inbound {
+func translateMessage(evt *events.Message) *Inbound {
 	// O que o proprio numero mandou volta pelo espelho dos outros
 	// aparelhos; deixar passar criaria uma conversa de entrada para cada
 	// mensagem que o servico acabou de enviar.
@@ -428,23 +428,23 @@ func traduzirMensagem(evt *events.Message) *Inbound {
 		return nil
 	}
 
-	texto := m.GetConversation()
-	if texto == "" {
-		texto = m.GetExtendedTextMessage().GetText()
+	text := m.GetConversation()
+	if text == "" {
+		text = m.GetExtendedTextMessage().GetText()
 	}
 	return &Inbound{
 		ID:   evt.Info.ID,
 		From: evt.Info.Sender.ToNonAD().String(),
-		Text: texto,
+		Text: text,
 		// Midia nao entra nesta etapa, mas tem que aparecer: o cliente
 		// manda a foto do boleto e escreve "e esse aqui", e sem a marca o
 		// atendente le so o "e esse aqui".
-		Unsupported: texto == "",
+		Unsupported: text == "",
 		Timestamp:   evt.Info.Timestamp,
 	}
 }
 
-func traduzirRecibo(evt *events.Receipt) []Evento {
+func translateReceipt(evt *events.Receipt) []Event {
 	var status DeliveryStatus
 	switch evt.Type {
 	case types.ReceiptTypeDelivered:
@@ -456,14 +456,14 @@ func traduzirRecibo(evt *events.Receipt) []Evento {
 	default:
 		return nil
 	}
-	eventos := make([]Evento, 0, len(evt.MessageIDs))
+	out := make([]Event, 0, len(evt.MessageIDs))
 	for _, id := range evt.MessageIDs {
-		eventos = append(eventos, Evento{Kind: EventDelivery, Delivery: &Delivery{
+		out = append(out, Event{Kind: EventDelivery, Delivery: &Delivery{
 			ID:        string(id),
 			To:        evt.MessageSource.Chat.ToNonAD().String(),
 			Status:    status,
 			Timestamp: evt.Timestamp,
 		}})
 	}
-	return eventos
+	return out
 }

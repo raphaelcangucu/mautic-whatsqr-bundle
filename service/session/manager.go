@@ -91,7 +91,7 @@ type Options struct {
 // Regra de transicao nenhuma mora aqui. O gerente traduz evento em chamada
 // e aceita a resposta que o state.go der, inclusive quando e nao.
 type Manager struct {
-	dial func(id string) (Cliente, error)
+	dial func(id string) (Client, error)
 	opts Options
 
 	// mu guarda so o mapa de sessoes, e nunca e segurado durante uma
@@ -117,12 +117,12 @@ type Manager struct {
 // um mutex seria um segundo mecanismo dizendo a mesma coisa -- e dois
 // mecanismos e como nasce a ordem de aquisicao que ninguem documentou.
 type live struct {
-	id      string
-	cliente Cliente
-	cmds    chan func()
-	quit    chan struct{}
-	done    chan struct{}
-	once    sync.Once
+	id     string
+	client Client
+	cmds   chan func()
+	quit   chan struct{}
+	done   chan struct{}
+	once   sync.Once
 
 	// state e lastRefusal so sao tocados pela goroutine dona.
 	state       *Session
@@ -131,9 +131,9 @@ type live struct {
 
 // NewManager monta o gerente. dial abre o cliente de um id -- no servico e
 // o whatsmeow; no teste, a mentira.
-func NewManager(dial func(id string) (Cliente, error), opts Options) *Manager {
+func NewManager(dial func(id string) (Client, error), opts Options) *Manager {
 	if dial == nil {
-		dial = func(string) (Cliente, error) {
+		dial = func(string) (Client, error) {
 			return nil, errors.New("session: gerente sem fabrica de cliente")
 		}
 	}
@@ -164,42 +164,42 @@ func (m *Manager) Open(ctx context.Context, id string) (Snapshot, error) {
 	// que falhou deixaria o id ocupado ate reiniciar o servico.
 	defer m.release(id)
 
-	cliente, err := m.dial(id)
+	client, err := m.dial(id)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	eventos, err := cliente.Conectar(ctx)
+	events, err := client.Connect(ctx)
 	if err != nil {
-		cliente.Desconectar()
+		client.Disconnect()
 		return Snapshot{}, err
 	}
-	if eventos == nil {
-		cliente.Desconectar()
+	if events == nil {
+		client.Disconnect()
 		return Snapshot{}, ErrNotReady
 	}
 
 	lv := &live{
-		id:      id,
-		cliente: cliente,
-		cmds:    make(chan func()),
-		quit:    make(chan struct{}),
-		done:    make(chan struct{}),
-		state:   New(m.opts.Window),
+		id:     id,
+		client: client,
+		cmds:   make(chan func()),
+		quit:   make(chan struct{}),
+		done:   make(chan struct{}),
+		state:  New(m.opts.Window),
 	}
 
-	qr := cliente.QrAtual()
+	qr := client.CurrentQR()
 	if qr == "" {
 		// Sessao que voltou do disco ja pareada: nao havera scan nenhum, e
 		// sem isto ela ficaria em pairing para sempre mostrando um QR que
 		// nao existe. O chip e o do disco, entao a regra do JID continua
 		// valendo a partir dele.
-		jid := cliente.Jid()
+		jid := client.JID()
 		if jid == "" {
-			cliente.Desconectar()
+			client.Disconnect()
 			return Snapshot{}, ErrNotReady
 		}
 		if err := lv.state.Scanned(jid); err != nil {
-			cliente.Desconectar()
+			client.Disconnect()
 			return Snapshot{}, err
 		}
 	}
@@ -211,17 +211,17 @@ func (m *Manager) Open(ctx context.Context, id string) (Snapshot, error) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		cliente.Desconectar()
+		client.Disconnect()
 		return Snapshot{}, ErrSessionClosed
 	}
 	m.sessions[id] = lv
 	m.mu.Unlock()
 
-	go m.run(lv, eventos)
+	go m.run(lv, events)
 	return snap, nil
 }
 
-// reserve marca o id como em abertura e solta o lock. Conectar fala com o
+// reserve marca o id como em abertura e solta o lock. Connect fala com o
 // WhatsApp e pode demorar; segurar o lock do mapa ate la faria uma sessao
 // lenta travar todas as outras.
 func (m *Manager) reserve(id string) error {
@@ -266,24 +266,24 @@ func (m *Manager) Snapshot(id string) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return m.retrato(lv)
+	return m.snapshotOf(lv)
 }
 
 // Status e o retrato de todas, para o /health.
 func (m *Manager) Status() []Snapshot {
 	m.mu.RLock()
-	vivas := make([]*live, 0, len(m.sessions))
+	alive := make([]*live, 0, len(m.sessions))
 	for _, lv := range m.sessions {
-		vivas = append(vivas, lv)
+		alive = append(alive, lv)
 	}
 	m.mu.RUnlock()
 
-	snaps := make([]Snapshot, 0, len(vivas))
-	for _, lv := range vivas {
+	snaps := make([]Snapshot, 0, len(alive))
+	for _, lv := range alive {
 		// Uma sessao que fechou entre o mapa e o retrato simplesmente nao
 		// aparece: /health responde o que existe agora, e nao um erro por
 		// causa de quem saiu no meio.
-		if snap, err := m.retrato(lv); err == nil {
+		if snap, err := m.snapshotOf(lv); err == nil {
 			snaps = append(snaps, snap)
 		}
 	}
@@ -291,21 +291,21 @@ func (m *Manager) Status() []Snapshot {
 }
 
 // Send confere o estado dentro da goroutine dona e envia fora dela.
-func (m *Manager) Send(ctx context.Context, id, para, texto string) (string, error) {
+func (m *Manager) Send(ctx context.Context, id, to, text string) (string, error) {
 	lv, err := m.find(id)
 	if err != nil {
 		return "", err
 	}
 
-	var cliente Cliente
+	var client Client
 	if err := lv.ask(func() {
 		if lv.state.State() == Connected {
-			cliente = lv.cliente
+			client = lv.client
 		}
 	}); err != nil {
 		return "", err
 	}
-	if cliente == nil {
+	if client == nil {
 		return "", ErrNotConnected
 	}
 
@@ -315,7 +315,7 @@ func (m *Manager) Send(ctx context.Context, id, para, texto string) (string, err
 	// depressa. O preco e a corrida entre a conferencia e o envio; se a
 	// sessao cair nesse intervalo, quem recusa e o WhatsApp, que e quem
 	// sabe a verdade nesse instante.
-	return cliente.EnviarTexto(ctx, para, texto)
+	return client.SendText(ctx, to, text)
 }
 
 // Close desconecta e esquece a sessao.
@@ -335,14 +335,14 @@ func (m *Manager) Close(id string) error {
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
 	m.closed = true
-	vivas := make([]*live, 0, len(m.sessions))
+	alive := make([]*live, 0, len(m.sessions))
 	for id, lv := range m.sessions {
-		vivas = append(vivas, lv)
+		alive = append(alive, lv)
 		delete(m.sessions, id)
 	}
 	m.mu.Unlock()
 
-	for _, lv := range vivas {
+	for _, lv := range alive {
 		lv.shutdown()
 	}
 }
@@ -357,7 +357,7 @@ func (m *Manager) find(id string) (*live, error) {
 	return lv, nil
 }
 
-func (m *Manager) retrato(lv *live) (Snapshot, error) {
+func (m *Manager) snapshotOf(lv *live) (Snapshot, error) {
 	var snap Snapshot
 	err := lv.ask(func() {
 		snap = Snapshot{
@@ -370,7 +370,7 @@ func (m *Manager) retrato(lv *live) (Snapshot, error) {
 			// O QR e lido do cliente, e nao de uma copia guardada na
 			// abertura: ele e renovado durante o pareamento, e um QR velho
 			// na tela e um scan que nao funciona sem explicacao.
-			snap.QR = lv.cliente.QrAtual()
+			snap.QR = lv.client.CurrentQR()
 		}
 		if lv.lastRefusal != nil {
 			snap.LastRefusal = lv.lastRefusal.Error()
@@ -381,7 +381,7 @@ func (m *Manager) retrato(lv *live) (Snapshot, error) {
 
 // run e a goroutine dona da sessao. Um select, tres origens: o que o
 // WhatsApp mandou, o que o servico pediu e o relogio.
-func (m *Manager) run(lv *live, eventos <-chan Evento) {
+func (m *Manager) run(lv *live, events <-chan Event) {
 	sweep := time.NewTicker(m.opts.Sweep)
 	defer sweep.Stop()
 	defer close(lv.done)
@@ -390,19 +390,19 @@ func (m *Manager) run(lv *live, eventos <-chan Evento) {
 		select {
 		case fn := <-lv.cmds:
 			fn()
-		case ev, ok := <-eventos:
+		case ev, ok := <-events:
 			if !ok {
 				// O cliente fechou o canal: desistiu. O laco continua de pe
 				// para que /health e DELETE ainda respondam -- uma sessao
 				// que some do mapa e uma tela que nao explica nada.
-				eventos = nil
-				m.transicao(lv, func() error { return lv.state.Fail("cliente encerrou os eventos") })
+				events = nil
+				m.transition(lv, func() error { return lv.state.Fail("cliente encerrou os eventos") })
 				continue
 			}
 			m.apply(lv, ev)
 		case <-sweep.C:
 			if lv.state.ExpireReconnect(m.opts.Now()) {
-				m.avisarEstado(lv)
+				m.notifyState(lv)
 			}
 		case <-lv.quit:
 			return
@@ -412,18 +412,18 @@ func (m *Manager) run(lv *live, eventos <-chan Evento) {
 
 // apply traduz evento em chamada da maquina de estados. Traduz e so: qual
 // transicao vale em qual estado esta no state.go, e e la que continua.
-func (m *Manager) apply(lv *live, ev Evento) {
+func (m *Manager) apply(lv *live, ev Event) {
 	switch ev.Kind {
 	case EventMessage:
 		// O que chega nao mexe no estado da sessao; so sai pelo aviso.
-		m.avisar(Notice{SessionID: lv.id, Kind: NoticeMessage, State: lv.state.State(), JID: lv.state.JID(), Message: ev.Message})
+		m.notify(Notice{SessionID: lv.id, Kind: NoticeMessage, State: lv.state.State(), JID: lv.state.JID(), Message: ev.Message})
 		return
 	case EventDelivery:
-		m.avisar(Notice{SessionID: lv.id, Kind: NoticeStatus, State: lv.state.State(), JID: lv.state.JID(), Delivery: ev.Delivery})
+		m.notify(Notice{SessionID: lv.id, Kind: NoticeStatus, State: lv.state.State(), JID: lv.state.JID(), Delivery: ev.Delivery})
 		return
 	}
 
-	m.transicao(lv, func() error {
+	m.transition(lv, func() error {
 		switch ev.Kind {
 		case EventPaired:
 			return lv.state.Scanned(ev.JID)
@@ -441,22 +441,22 @@ func (m *Manager) apply(lv *live, ev Evento) {
 	})
 }
 
-func (m *Manager) transicao(lv *live, chamar func() error) {
-	antes := lv.state.State()
-	if err := chamar(); err != nil {
+func (m *Manager) transition(lv *live, call func() error) {
+	before := lv.state.State()
+	if err := call(); err != nil {
 		lv.lastRefusal = err
 	}
 	// O aviso sai pela mudanca de estado, e nao pelo erro ser nil, porque
 	// ha uma transicao que recusa e muda o estado ao mesmo tempo: a volta
 	// fora do prazo devolve ErrReconnectExpired e deixa a sessao em Failed.
 	// Olhar so o erro esconderia dos outros a sessao que acabou de morrer.
-	if lv.state.State() != antes {
-		m.avisarEstado(lv)
+	if lv.state.State() != before {
+		m.notifyState(lv)
 	}
 }
 
-func (m *Manager) avisarEstado(lv *live) {
-	m.avisar(Notice{
+func (m *Manager) notifyState(lv *live) {
+	m.notify(Notice{
 		SessionID: lv.id,
 		Kind:      NoticeSession,
 		State:     lv.state.State(),
@@ -465,7 +465,7 @@ func (m *Manager) avisarEstado(lv *live) {
 	})
 }
 
-func (m *Manager) avisar(n Notice) {
+func (m *Manager) notify(n Notice) {
 	if m.opts.Notify != nil {
 		m.opts.Notify(n)
 	}
@@ -475,14 +475,14 @@ func (m *Manager) avisar(n Notice) {
 // toda leitura e escrita de fora passa -- e e por isso que a Session nao
 // precisa de mutex nenhum.
 func (lv *live) ask(fn func()) error {
-	pronto := make(chan struct{})
+	ready := make(chan struct{})
 	select {
-	case lv.cmds <- func() { defer close(pronto); fn() }:
+	case lv.cmds <- func() { defer close(ready); fn() }:
 	case <-lv.done:
 		return ErrSessionClosed
 	}
 	select {
-	case <-pronto:
+	case <-ready:
 		return nil
 	case <-lv.done:
 		return ErrSessionClosed
@@ -492,11 +492,11 @@ func (lv *live) ask(fn func()) error {
 func (lv *live) shutdown() {
 	lv.once.Do(func() {
 		close(lv.quit)
-		// Desconectar so depois que o laco parou: assim o cliente nao esta
+		// Disconnect so depois que o laco parou: assim o cliente nao esta
 		// sendo usado pela goroutine da sessao quando cai. Um envio em voo
 		// de outra goroutine ainda pode estar dentro dele, e a interface diz
 		// que isso e permitido e faz o envio falhar.
 		<-lv.done
-		lv.cliente.Desconectar()
+		lv.client.Disconnect()
 	})
 }

@@ -17,171 +17,171 @@ import (
 // interface diz que o cliente e chamado de varias goroutines ao mesmo tempo
 // -- e um teste que so passa por o cliente ser bem comportado nao testaria
 // o gerente.
-type clienteFalso struct {
-	nome    string
-	eventos chan Evento
+type fakeClient struct {
+	name   string
+	events chan Event
 
 	mu           sync.Mutex
 	qr           string
 	jid          string
-	enviadas     []enviada
-	erroEnvio    error
-	erroConectar error
-	conectou     bool
-	desconectou  bool
+	sent         []sentMessage
+	sendErr      error
+	connectErr   error
+	connected    bool
+	disconnected bool
 }
 
-type enviada struct {
-	para  string
-	texto string
+type sentMessage struct {
+	to   string
+	text string
 }
 
-func novoCliente(nome, qr string) *clienteFalso {
-	return &clienteFalso{nome: nome, qr: qr, eventos: make(chan Evento)}
+func newFakeClient(name, qr string) *fakeClient {
+	return &fakeClient{name: name, qr: qr, events: make(chan Event)}
 }
 
 // restaurado e a sessao que voltou do disco ja pareada: sem QR e com chip.
-func restaurado(nome, jid string) *clienteFalso {
-	c := novoCliente(nome, "")
+func newRestoredClient(name, jid string) *fakeClient {
+	c := newFakeClient(name, "")
 	c.jid = jid
 	return c
 }
 
-func (c *clienteFalso) Conectar(ctx context.Context) (<-chan Evento, error) {
+func (c *fakeClient) Connect(ctx context.Context) (<-chan Event, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.erroConectar != nil {
-		return nil, c.erroConectar
+	if c.connectErr != nil {
+		return nil, c.connectErr
 	}
-	c.conectou = true
-	return c.eventos, nil
+	c.connected = true
+	return c.events, nil
 }
 
-func (c *clienteFalso) QrAtual() string {
+func (c *fakeClient) CurrentQR() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.qr
 }
 
-func (c *clienteFalso) Jid() string {
+func (c *fakeClient) JID() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.jid
 }
 
-func (c *clienteFalso) EnviarTexto(ctx context.Context, para, texto string) (string, error) {
+func (c *fakeClient) SendText(ctx context.Context, to, text string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.erroEnvio != nil {
-		return "", c.erroEnvio
+	if c.sendErr != nil {
+		return "", c.sendErr
 	}
-	c.enviadas = append(c.enviadas, enviada{para: para, texto: texto})
+	c.sent = append(c.sent, sentMessage{to: to, text: text})
 	// O id carrega o nome do cliente: e assim que o teste percebe uma
 	// resposta saindo pelo numero errado.
-	return fmt.Sprintf("%s-msg-%d", c.nome, len(c.enviadas)), nil
+	return fmt.Sprintf("%s-msg-%d", c.name, len(c.sent)), nil
 }
 
-func (c *clienteFalso) Desconectar() {
+func (c *fakeClient) Disconnect() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.desconectou = true
+	c.disconnected = true
 }
 
-func (c *clienteFalso) mandou() []enviada {
+func (c *fakeClient) allSent() []sentMessage {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return append([]enviada(nil), c.enviadas...)
+	return append([]sentMessage(nil), c.sent...)
 }
 
-func (c *clienteFalso) caiu() bool {
+func (c *fakeClient) wasDisconnected() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.desconectou
+	return c.disconnected
 }
 
 // emitir entrega um evento e so volta quando a goroutine da sessao o
 // recebeu. Como o canal e sem buffer e quem le e um laco unico, qualquer
 // consulta feita depois disto ja enxerga o efeito do evento -- nao ha
 // espera arbitraria em teste nenhum abaixo.
-func (c *clienteFalso) emitir(t *testing.T, ev Evento) {
+func (c *fakeClient) emit(t *testing.T, ev Event) {
 	t.Helper()
 	select {
-	case c.eventos <- ev:
+	case c.events <- ev:
 	case <-time.After(3 * time.Second):
-		t.Fatalf("%s: ninguem leu o evento %s", c.nome, ev.Kind)
+		t.Fatalf("%s: ninguem leu o evento %s", c.name, ev.Kind)
 	}
 }
 
 // relogio de mentira: o gerente e o unico que olha as horas, e nos testes
 // quem manda nelas e o teste.
-type relogio struct {
+type clock struct {
 	mu sync.Mutex
 	t  time.Time
 }
 
-func (r *relogio) agora() time.Time {
+func (r *clock) now() time.Time {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.t
 }
 
-func (r *relogio) avancar(d time.Duration) {
+func (r *clock) advance(d time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.t = r.t.Add(d)
 }
 
 // coletor guarda os avisos que o gerente manda para fora.
-type coletor struct {
-	mu     sync.Mutex
-	avisos []Notice
+type collector struct {
+	mu      sync.Mutex
+	notices []Notice
 }
 
-func (c *coletor) add(n Notice) {
+func (c *collector) add(n Notice) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.avisos = append(c.avisos, n)
+	c.notices = append(c.notices, n)
 }
 
-func (c *coletor) todos() []Notice {
+func (c *collector) all() []Notice {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return append([]Notice(nil), c.avisos...)
+	return append([]Notice(nil), c.notices...)
 }
 
-type bancada struct {
-	m        *Manager
-	relogio  *relogio
-	avisos   *coletor
-	clientes map[string]*clienteFalso
+type bench struct {
+	m       *Manager
+	clock   *clock
+	notices *collector
+	clients map[string]*fakeClient
 }
 
-func montar(t *testing.T, clientes map[string]*clienteFalso) *bancada {
+func newBench(t *testing.T, clients map[string]*fakeClient) *bench {
 	t.Helper()
-	b := &bancada{
-		relogio:  &relogio{t: t0},
-		avisos:   &coletor{},
-		clientes: clientes,
+	b := &bench{
+		clock:   &clock{t: t0},
+		notices: &collector{},
+		clients: clients,
 	}
-	b.m = NewManager(func(id string) (Cliente, error) {
-		c, ok := clientes[id]
+	b.m = NewManager(func(id string) (Client, error) {
+		c, ok := clients[id]
 		if !ok {
 			return nil, fmt.Errorf("nao ha cliente de mentira para %q", id)
 		}
 		return c, nil
 	}, Options{
 		Window: testWindow,
-		Now:    b.relogio.agora,
+		Now:    b.clock.now,
 		// Cobranca curta para o teste da janela nao esperar; quando ela
 		// vence continua sendo decisao do state.go.
 		Sweep:  time.Millisecond,
-		Notify: b.avisos.add,
+		Notify: b.notices.add,
 	})
 	t.Cleanup(b.m.Shutdown)
 	return b
 }
 
-func (b *bancada) abrir(t *testing.T, id string) Snapshot {
+func (b *bench) open(t *testing.T, id string) Snapshot {
 	t.Helper()
 	snap, err := b.m.Open(context.Background(), id)
 	assertOK(t, err, "Open "+id)
@@ -189,14 +189,14 @@ func (b *bancada) abrir(t *testing.T, id string) Snapshot {
 }
 
 // conectada abre e pareia, que e o ponto de partida de quase todo teste.
-func (b *bancada) conectada(t *testing.T, id, jid string) {
+func (b *bench) paired(t *testing.T, id, jid string) {
 	t.Helper()
-	b.abrir(t, id)
-	b.clientes[id].emitir(t, Evento{Kind: EventPaired, JID: jid})
-	b.exigeEstado(t, id, Connected)
+	b.open(t, id)
+	b.clients[id].emit(t, Event{Kind: EventPaired, JID: jid})
+	b.requireState(t, id, Connected)
 }
 
-func (b *bancada) exigeEstado(t *testing.T, id string, want State) Snapshot {
+func (b *bench) requireState(t *testing.T, id string, want State) Snapshot {
 	t.Helper()
 	snap, err := b.m.Snapshot(id)
 	assertOK(t, err, "Snapshot "+id)
@@ -208,16 +208,16 @@ func (b *bancada) exigeEstado(t *testing.T, id string, want State) Snapshot {
 
 // esperarEstado e para o unico caminho que nao e sincrono: a cobranca da
 // janela de reconexao, que acontece num tique e nao num evento.
-func (b *bancada) esperarEstado(t *testing.T, id string, want State) Snapshot {
+func (b *bench) waitForState(t *testing.T, id string, want State) Snapshot {
 	t.Helper()
-	limite := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(3 * time.Second)
 	for {
 		snap, err := b.m.Snapshot(id)
 		assertOK(t, err, "Snapshot "+id)
 		if snap.State == want {
 			return snap
 		}
-		if time.Now().After(limite) {
+		if time.Now().After(deadline) {
 			t.Fatalf("sessao %q: estado = %q, esperava chegar a %q", id, snap.State, want)
 		}
 		time.Sleep(time.Millisecond)
@@ -225,9 +225,9 @@ func (b *bancada) esperarEstado(t *testing.T, id string, want State) Snapshot {
 }
 
 func TestOpeningASessionReturnsAQr(t *testing.T) {
-	b := montar(t, map[string]*clienteFalso{"a": novoCliente("a", "qr-da-a")})
+	b := newBench(t, map[string]*fakeClient{"a": newFakeClient("a", "qr-da-a")})
 
-	snap := b.abrir(t, "a")
+	snap := b.open(t, "a")
 
 	if snap.ID != "a" {
 		t.Fatalf("id = %q, esperado %q", snap.ID, "a")
@@ -241,9 +241,9 @@ func TestOpeningASessionReturnsAQr(t *testing.T) {
 
 	// A rota do QR renovado le o mesmo cliente, e nao uma copia guardada na
 	// abertura: o QR muda sozinho durante o pareamento.
-	b.clientes["a"].mu.Lock()
-	b.clientes["a"].qr = "qr-renovado"
-	b.clientes["a"].mu.Unlock()
+	b.clients["a"].mu.Lock()
+	b.clients["a"].qr = "qr-renovado"
+	b.clients["a"].mu.Unlock()
 
 	qr, err := b.m.QR("a")
 	assertOK(t, err, "QR")
@@ -253,8 +253,8 @@ func TestOpeningASessionReturnsAQr(t *testing.T) {
 }
 
 func TestSendingOnADroppedSessionFails(t *testing.T) {
-	b := montar(t, map[string]*clienteFalso{"a": novoCliente("a", "qr-da-a")})
-	b.conectada(t, "a", jidPaired)
+	b := newBench(t, map[string]*fakeClient{"a": newFakeClient("a", "qr-da-a")})
+	b.paired(t, "a", jidPaired)
 
 	// Conectada, envia. Sem isto o teste de baixo passaria com um gerente
 	// que nao envia nunca.
@@ -264,8 +264,8 @@ func TestSendingOnADroppedSessionFails(t *testing.T) {
 		t.Fatalf("message id = %q, esperado %q", id, "a-msg-1")
 	}
 
-	b.clientes["a"].emitir(t, Evento{Kind: EventDropped})
-	b.exigeEstado(t, "a", Reconnecting)
+	b.clients["a"].emit(t, Event{Kind: EventDropped})
+	b.requireState(t, "a", Reconnecting)
 
 	// A falha tem que ser esta, e nao uma qualquer: e ela que a rota traduz
 	// para a falha temporaria, que e o que segura a mensagem na fila em vez
@@ -274,23 +274,23 @@ func TestSendingOnADroppedSessionFails(t *testing.T) {
 	if !errors.Is(err, ErrNotConnected) {
 		t.Fatalf("erro = %v, esperava errors.Is(err, ErrNotConnected)", err)
 	}
-	if n := len(b.clientes["a"].mandou()); n != 1 {
+	if n := len(b.clients["a"].allSent()); n != 1 {
 		t.Fatalf("o cliente recebeu %d envios, esperado 1", n)
 	}
 }
 
 func TestTwoSessionsDoNotShareState(t *testing.T) {
-	b := montar(t, map[string]*clienteFalso{
-		"a": novoCliente("a", "qr-da-a"),
-		"b": novoCliente("b", "qr-da-b"),
+	b := newBench(t, map[string]*fakeClient{
+		"a": newFakeClient("a", "qr-da-a"),
+		"b": newFakeClient("b", "qr-da-b"),
 	})
-	b.conectada(t, "a", jidPaired)
-	b.conectada(t, "b", jidOther)
+	b.paired(t, "a", jidPaired)
+	b.paired(t, "b", jidOther)
 
 	// A cai. B nao tem nada com isso.
-	b.clientes["a"].emitir(t, Evento{Kind: EventDropped})
-	b.exigeEstado(t, "a", Reconnecting)
-	snapB := b.exigeEstado(t, "b", Connected)
+	b.clients["a"].emit(t, Event{Kind: EventDropped})
+	b.requireState(t, "a", Reconnecting)
+	snapB := b.requireState(t, "b", Connected)
 
 	if snapB.JID != jidOther {
 		t.Fatalf("jid de b = %q, esperado %q", snapB.JID, jidOther)
@@ -305,28 +305,28 @@ func TestTwoSessionsDoNotShareState(t *testing.T) {
 	if !strings.HasPrefix(msg, "b-") {
 		t.Fatalf("message id = %q, esperava vir da sessao b", msg)
 	}
-	if n := len(b.clientes["a"].mandou()); n != 0 {
-		t.Fatalf("a mensagem de b saiu pela sessao a: %v", b.clientes["a"].mandou())
+	if n := len(b.clients["a"].allSent()); n != 0 {
+		t.Fatalf("a mensagem de b saiu pela sessao a: %v", b.clients["a"].allSent())
 	}
-	if enviadas := b.clientes["b"].mandou(); len(enviadas) != 1 || enviadas[0].texto != "so pela b" {
-		t.Fatalf("envios de b = %v", enviadas)
+	if sent := b.clients["b"].allSent(); len(sent) != 1 || sent[0].text != "so pela b" {
+		t.Fatalf("envios de b = %v", sent)
 	}
 
 	// E o que chega numa nao pode sair com o id da outra.
-	b.clientes["a"].emitir(t, Evento{Kind: EventMessage, Message: &Inbound{ID: "e1", From: jidPaired, Text: "chegou na a"}})
-	b.exigeEstado(t, "a", Reconnecting)
+	b.clients["a"].emit(t, Event{Kind: EventMessage, Message: &Inbound{ID: "e1", From: jidPaired, Text: "chegou na a"}})
+	b.requireState(t, "a", Reconnecting)
 
-	var mensagens []Notice
-	for _, n := range b.avisos.todos() {
+	var messages []Notice
+	for _, n := range b.notices.all() {
 		if n.Kind == NoticeMessage {
-			mensagens = append(mensagens, n)
+			messages = append(messages, n)
 		}
 	}
-	if len(mensagens) != 1 {
-		t.Fatalf("avisos de mensagem = %d, esperado 1", len(mensagens))
+	if len(messages) != 1 {
+		t.Fatalf("avisos de mensagem = %d, esperado 1", len(messages))
 	}
-	if mensagens[0].SessionID != "a" || mensagens[0].Message.Text != "chegou na a" {
-		t.Fatalf("aviso = %+v, esperado da sessao a", mensagens[0])
+	if messages[0].SessionID != "a" || messages[0].Message.Text != "chegou na a" {
+		t.Fatalf("aviso = %+v, esperado da sessao a", messages[0])
 	}
 }
 
@@ -335,26 +335,26 @@ func TestTwoSessionsDoNotShareState(t *testing.T) {
 // e evento chegam ao mesmo tempo, e um estado compartilhado por engano so
 // aparece assim.
 func TestConcurrentTrafficStaysWithItsOwnSession(t *testing.T) {
-	b := montar(t, map[string]*clienteFalso{
-		"a": novoCliente("a", "qr-da-a"),
-		"b": novoCliente("b", "qr-da-b"),
+	b := newBench(t, map[string]*fakeClient{
+		"a": newFakeClient("a", "qr-da-a"),
+		"b": newFakeClient("b", "qr-da-b"),
 	})
-	b.conectada(t, "a", jidPaired)
-	b.conectada(t, "b", jidOther)
+	b.paired(t, "a", jidPaired)
+	b.paired(t, "b", jidOther)
 
-	const rodadas = 50
+	const rounds = 50
 	var wg sync.WaitGroup
 	for _, id := range []string{"a", "b"} {
 		wg.Add(3)
 		go func(id string) {
 			defer wg.Done()
-			for i := 0; i < rodadas; i++ {
-				b.clientes[id].emitir(t, Evento{Kind: EventMessage, Message: &Inbound{ID: fmt.Sprintf("%s-%d", id, i), From: id, Text: id}})
+			for i := 0; i < rounds; i++ {
+				b.clients[id].emit(t, Event{Kind: EventMessage, Message: &Inbound{ID: fmt.Sprintf("%s-%d", id, i), From: id, Text: id}})
 			}
 		}(id)
 		go func(id string) {
 			defer wg.Done()
-			for i := 0; i < rodadas; i++ {
+			for i := 0; i < rounds; i++ {
 				if _, err := b.m.Send(context.Background(), id, "5511777770000", id); err != nil {
 					t.Errorf("Send %s: %v", id, err)
 					return
@@ -363,7 +363,7 @@ func TestConcurrentTrafficStaysWithItsOwnSession(t *testing.T) {
 		}(id)
 		go func(id string) {
 			defer wg.Done()
-			for i := 0; i < rodadas; i++ {
+			for i := 0; i < rounds; i++ {
 				b.m.Status()
 				if _, err := b.m.Snapshot(id); err != nil {
 					t.Errorf("Snapshot %s: %v", id, err)
@@ -375,68 +375,68 @@ func TestConcurrentTrafficStaysWithItsOwnSession(t *testing.T) {
 	wg.Wait()
 
 	for _, id := range []string{"a", "b"} {
-		enviadas := b.clientes[id].mandou()
-		if len(enviadas) != rodadas {
-			t.Fatalf("sessao %s mandou %d, esperado %d", id, len(enviadas), rodadas)
+		sent := b.clients[id].allSent()
+		if len(sent) != rounds {
+			t.Fatalf("sessao %s mandou %d, esperado %d", id, len(sent), rounds)
 		}
-		for _, e := range enviadas {
-			if e.texto != id {
-				t.Fatalf("sessao %s mandou texto %q da outra sessao", id, e.texto)
+		for _, e := range sent {
+			if e.text != id {
+				t.Fatalf("sessao %s mandou texto %q da outra sessao", id, e.text)
 			}
 		}
 	}
 
-	contagem := map[string]int{}
-	for _, n := range b.avisos.todos() {
+	counts := map[string]int{}
+	for _, n := range b.notices.all() {
 		if n.Kind != NoticeMessage {
 			continue
 		}
 		if n.Message.Text != n.SessionID {
 			t.Fatalf("aviso da sessao %q carregou mensagem de %q", n.SessionID, n.Message.Text)
 		}
-		contagem[n.SessionID]++
+		counts[n.SessionID]++
 	}
 	for _, id := range []string{"a", "b"} {
-		if contagem[id] != rodadas {
-			t.Fatalf("sessao %s avisou %d mensagens, esperado %d", id, contagem[id], rodadas)
+		if counts[id] != rounds {
+			t.Fatalf("sessao %s avisou %d mensagens, esperado %d", id, counts[id], rounds)
 		}
 	}
 }
 
 func TestAReconnectingSessionExpiresWithoutAnyoneAsking(t *testing.T) {
-	b := montar(t, map[string]*clienteFalso{"a": novoCliente("a", "qr-da-a")})
-	b.conectada(t, "a", jidPaired)
+	b := newBench(t, map[string]*fakeClient{"a": newFakeClient("a", "qr-da-a")})
+	b.paired(t, "a", jidPaired)
 
-	b.clientes["a"].emitir(t, Evento{Kind: EventDropped})
-	b.exigeEstado(t, "a", Reconnecting)
+	b.clients["a"].emit(t, Event{Kind: EventDropped})
+	b.requireState(t, "a", Reconnecting)
 
 	// Ninguem vai chamar nada: quem cobra o prazo e o gerente.
-	b.relogio.avancar(testWindow + time.Second)
-	snap := b.esperarEstado(t, "a", Failed)
+	b.clock.advance(testWindow + time.Second)
+	snap := b.waitForState(t, "a", Failed)
 
 	if !strings.Contains(snap.Reason, "reconexao") {
 		t.Fatalf("motivo = %q, esperava falar da janela de reconexao", snap.Reason)
 	}
-	var visto bool
-	for _, n := range b.avisos.todos() {
+	var seen bool
+	for _, n := range b.notices.all() {
 		if n.Kind == NoticeSession && n.State == Failed {
-			visto = true
+			seen = true
 		}
 	}
-	if !visto {
+	if !seen {
 		t.Fatal("a sessao venceu e ninguem foi avisado")
 	}
 }
 
 func TestAComingBackAsAnotherChipIsRefusedAndRecorded(t *testing.T) {
-	b := montar(t, map[string]*clienteFalso{"a": novoCliente("a", "qr-da-a")})
-	b.conectada(t, "a", jidPaired)
-	b.clientes["a"].emitir(t, Evento{Kind: EventDropped})
-	b.exigeEstado(t, "a", Reconnecting)
+	b := newBench(t, map[string]*fakeClient{"a": newFakeClient("a", "qr-da-a")})
+	b.paired(t, "a", jidPaired)
+	b.clients["a"].emit(t, Event{Kind: EventDropped})
+	b.requireState(t, "a", Reconnecting)
 
-	b.clientes["a"].emitir(t, Evento{Kind: EventResumed, JID: jidOther})
+	b.clients["a"].emit(t, Event{Kind: EventResumed, JID: jidOther})
 
-	snap := b.exigeEstado(t, "a", Reconnecting)
+	snap := b.requireState(t, "a", Reconnecting)
 	if snap.LastRefusal == "" {
 		t.Fatal("a recusa foi engolida: LastRefusal vazio")
 	}
@@ -446,9 +446,9 @@ func TestAComingBackAsAnotherChipIsRefusedAndRecorded(t *testing.T) {
 }
 
 func TestARestoredSessionComesBackConnectedWithoutAQr(t *testing.T) {
-	b := montar(t, map[string]*clienteFalso{"a": restaurado("a", jidPaired)})
+	b := newBench(t, map[string]*fakeClient{"a": newRestoredClient("a", jidPaired)})
 
-	snap := b.abrir(t, "a")
+	snap := b.open(t, "a")
 	if snap.State != Connected {
 		t.Fatalf("estado = %q, esperado %q", snap.State, Connected)
 	}
@@ -464,8 +464,8 @@ func TestARestoredSessionComesBackConnectedWithoutAQr(t *testing.T) {
 }
 
 func TestClosingASessionDropsItsClientAndForgetsIt(t *testing.T) {
-	b := montar(t, map[string]*clienteFalso{"a": novoCliente("a", "qr-da-a")})
-	b.conectada(t, "a", jidPaired)
+	b := newBench(t, map[string]*fakeClient{"a": newFakeClient("a", "qr-da-a")})
+	b.paired(t, "a", jidPaired)
 
 	// Abrir o mesmo id duas vezes seria duas goroutines mandando pelo mesmo
 	// numero.
@@ -474,7 +474,7 @@ func TestClosingASessionDropsItsClientAndForgetsIt(t *testing.T) {
 	}
 
 	assertOK(t, b.m.Close("a"), "Close")
-	if !b.clientes["a"].caiu() {
+	if !b.clients["a"].wasDisconnected() {
 		t.Fatal("a sessao fechou e o cliente continuou de pe")
 	}
 	if _, err := b.m.Snapshot("a"); !errors.Is(err, ErrUnknownSession) {
@@ -489,18 +489,18 @@ func TestClosingASessionDropsItsClientAndForgetsIt(t *testing.T) {
 }
 
 func TestStatusShowsEverySession(t *testing.T) {
-	b := montar(t, map[string]*clienteFalso{
-		"a": novoCliente("a", "qr-da-a"),
-		"b": novoCliente("b", "qr-da-b"),
+	b := newBench(t, map[string]*fakeClient{
+		"a": newFakeClient("a", "qr-da-a"),
+		"b": newFakeClient("b", "qr-da-b"),
 	})
-	b.conectada(t, "a", jidPaired)
-	b.abrir(t, "b")
+	b.paired(t, "a", jidPaired)
+	b.open(t, "b")
 
-	estados := map[string]State{}
+	states := map[string]State{}
 	for _, snap := range b.m.Status() {
-		estados[snap.ID] = snap.State
+		states[snap.ID] = snap.State
 	}
-	if len(estados) != 2 || estados["a"] != Connected || estados["b"] != Pairing {
-		t.Fatalf("status = %v, esperado a conectada e b pareando", estados)
+	if len(states) != 2 || states["a"] != Connected || states["b"] != Pairing {
+		t.Fatalf("status = %v, esperado a conectada e b pareando", states)
 	}
 }

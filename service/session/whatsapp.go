@@ -11,10 +11,11 @@ import (
 // e essa promessa so vale se o que entrar do outro lado desta interface
 // puder mudar sem que o gerente perceba.
 //
-// Sobre os nomes: Cliente, Conectar, QrAtual, Jid, EnviarTexto e
-// Desconectar vem do desenho aprovado e ficam exatamente como foram
-// escritos la. O que foi inventado aqui segue o state.go, que e o unico
-// arquivo que este pacote ja tinha.
+// Os nomes desta interface saiam do desenho aprovado em portugues e foram
+// passados para o ingles: o state.go ja estava em ingles, e um pacote com
+// Client.SendText ao lado de Manager.Send e pior do que qualquer das duas
+// linguas sozinha. Os comentarios continuam em portugues porque o
+// raciocinio e lido por quem mantem; o identificador, pelo compilador.
 
 // EventKind diz o que aconteceu do lado do WhatsApp. String nomeada pelo
 // mesmo motivo do State: estes valores vao parar em log e no corpo do
@@ -48,9 +49,9 @@ const (
 // estado atual para escolher entre Scanned e Reconnected -- e ai a regra de
 // transicao estaria no gerente, que e exatamente onde ela nao pode estar.
 
-// Evento e uma coisa que aconteceu numa sessao. Nao carrega o id da sessao
+// Event e uma coisa que aconteceu numa sessao. Nao carrega o id da sessao
 // porque o canal ja e de uma sessao so: quem le sabe de quem e.
-type Evento struct {
+type Event struct {
 	Kind EventKind
 	// JID vale em EventPaired e EventResumed.
 	JID string
@@ -95,45 +96,45 @@ type Delivery struct {
 	Timestamp time.Time
 }
 
-// Cliente e uma sessao de WhatsApp vista de dentro do servico: o minimo que
+// Client e uma sessao de WhatsApp vista de dentro do servico: o minimo que
 // o gerente precisa para abrir, mostrar o QR, enviar e fechar.
 //
 // As implementacoes sao chamadas de mais de uma goroutine ao mesmo tempo --
 // a requisicao que serve o QR, a que envia e a goroutine dona da sessao --
 // e cada uma se vira com isso por dentro. O gerente serializa a maquina de
 // estados, que e dele; nao o cliente, que e da borda.
-type Cliente interface {
-	// Conectar liga a sessao e devolve o canal por onde os eventos chegam.
+type Client interface {
+	// Connect liga a sessao e devolve o canal por onde os eventos chegam.
 	//
-	// Quando volta sem erro, ou QrAtual tem um QR para mostrar, ou Jid tem o
-	// chip de uma sessao ja pareada restaurada do disco. O servico responde
+	// Quando volta sem erro, ou CurrentQR tem um QR para mostrar, ou JID tem
+	// o chip de uma sessao ja pareada restaurada do disco. O servico responde
 	// POST /sessions dentro da mesma requisicao e nao pode ficar esperando
 	// um evento que talvez nunca venha.
 	//
 	// O ctx vale pela tentativa de conexao, nao pela vida da sessao: a
-	// sessao dura ate Desconectar. Sem essa separacao, o ctx da requisicao
+	// sessao dura ate Disconnect. Sem essa separacao, o ctx da requisicao
 	// HTTP que abriu a sessao a derrubaria ao terminar de responder.
 	//
 	// Fechar o canal significa que o cliente desistiu de vez.
-	Conectar(ctx context.Context) (<-chan Evento, error)
+	Connect(ctx context.Context) (<-chan Event, error)
 
-	// QrAtual e o QR de agora, ou vazio fora do pareamento. O QR e renovado
+	// CurrentQR e o QR de agora, ou vazio fora do pareamento. O QR e renovado
 	// pelo WhatsApp de tempos em tempos, entao duas chamadas seguidas podem
 	// devolver coisas diferentes -- e por isso ele e consulta, e nao um
 	// valor entregue uma vez na abertura.
-	QrAtual() string
+	CurrentQR() string
 
-	// Jid e o chip pareado, ou vazio se ainda nao pareou. E o que responde
+	// JID e o chip pareado, ou vazio se ainda nao pareou. E o que responde
 	// pela sessao que voltou do disco ja autenticada, sem scan nenhum.
-	Jid() string
+	JID() string
 
-	// EnviarTexto manda o texto e devolve o id da mensagem. O id nao pode
+	// SendText manda o texto e devolve o id da mensagem. O id nao pode
 	// voltar vazio: e ele que amarra o status de entrega que chega depois a
 	// bolha certa na caixa.
-	EnviarTexto(ctx context.Context, para string, texto string) (string, error)
+	SendText(ctx context.Context, to string, text string) (string, error)
 
-	// Desconectar fecha a sessao. E idempotente e pode acontecer no meio de
-	// um EnviarTexto de outra goroutine; nesse caso o envio falha, o que e
+	// Disconnect fecha a sessao. E idempotente e pode acontecer no meio de
+	// um SendText de outra goroutine; nesse caso o envio falha, o que e
 	// preferivel a segurar o desligamento esperando a rede.
-	Desconectar()
+	Disconnect()
 }
