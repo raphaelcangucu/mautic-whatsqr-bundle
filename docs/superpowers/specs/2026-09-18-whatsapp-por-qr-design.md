@@ -57,7 +57,7 @@ Estado em SQLite ao lado do binário. É o que o whatsmeow já usa e é o que fa
 
 Autenticação por token compartilhado em cabeçalho, além do bind local. Os dois, não um: o bind local cai se alguém mudar a configuração, e o token sozinho não protege de outro processo no mesmo servidor.
 
-**Webhook para o Mautic:** `POST {mautic}/whatsqr/webhook`, assinado com HMAC-SHA256 sobre o corpo, com o segredo compartilhado. O plugin **recusa corpo sem assinatura válida** — esta rota é pública e precisa ser, porque o serviço a chama de fora do ciclo de requisição do Mautic.
+**Webhook para o Mautic:** `POST {mautic}/whatsqr/webhook`, assinado com HMAC-SHA256. O plugin **recusa corpo sem assinatura válida** — esta rota é pública e precisa ser, porque o serviço a chama de fora do ciclo de requisição do Mautic. Com segredo por número, a escolha da chave tem uma regra própria: ver *O webhook precisa saber qual segredo usar antes de confiar no corpo*, abaixo.
 
 Eventos: `message` (entrada), `status` (entrega/leitura), `session` (mudança de estado da sessão). O serviço repete com recuo exponencial até o Mautic responder 200, e guarda em disco o que não entregou. Uma mensagem que chega duas vezes é reconhecida pelo id do WhatsApp e ignorada na segunda.
 
@@ -81,9 +81,11 @@ O `match` do executor **não muda**. A caixa **não muda**. O plugin novo pode s
 
 **O custo é real e precisa ser dito:** o `OutboundOperationExecutor` e o `WhatsAppSender` estão escritos num estilo comprimido, com linhas longas, e atendem três canais em produção. Extrair a interface vai dar um diff maior do que a mudança conceitual sugere. Esta parte vai primeiro, com teste, e sem nenhuma mudança de comportamento — o Graph continua fazendo exatamente o que faz hoje.
 
-## O motor é trocável, e a configuração diz qual está valendo
+## O motor é escolhido por número, e a configuração diz qual está valendo
 
 WhatsMeow é a escolha de hoje, não uma premissa do desenho. Canal não homologado é território onde bibliotecas morrem: o projeto é abandonado, o protocolo muda e ninguém acompanha, ou a licença vira problema. Trocar o motor não pode significar reescrever o plugin.
+
+**E a escolha é por número, não do plugin inteiro.** Isso não é simetria gratuita: num canal não homologado o comportamento varia por número. Um número que começa a cair com frequência, ou que a Meta trata com mais rigor, precisa poder mudar de motor sozinho — sem mexer nos outros quatro que estão funcionando, e sem uma janela de manutenção que derrube o atendimento inteiro.
 
 **Onde fica a costura.** Tanto o WhatsMeow quanto o Baileys rodam como serviço ao lado e falam HTTP — o que muda entre eles é o dialeto, não a natureza. Então a costura fica na borda HTTP do plugin, e não dentro do domínio dele:
 
@@ -94,28 +96,41 @@ interface SessionDriverInterface
     public function sessionState(MetaAsset $asset): SessionState;
     public function closeSession(MetaAsset $asset): void;
     public function sendText(MetaAsset $asset, string $to, string $text, string $requestId): SentMessage;
-    public function verifyWebhook(string $body, string $signature): bool;
 }
 ```
 
-Cinco métodos, e cada um existe porque o plugin **já precisa dele hoje** — não porque o Baileys talvez precise amanhã. `SessionState` e `SentMessage` são objetos do plugin, não a resposta crua do serviço: é o adaptador que traduz, e é por isso que o dialeto de cada motor não vaza para dentro.
+Quatro métodos, e cada um existe porque o plugin **já precisa dele hoje** — não porque o Baileys talvez precise amanhã. `SessionState` e `SentMessage` são objetos do plugin, não a resposta crua do serviço: é o adaptador que traduz, e é por isso que o dialeto de cada motor não vaza para dentro.
 
-**A fábrica.** `SessionDriverFactory` recebe o nome do motor da configuração e devolve o adaptador. Um motor desconhecido, ou um configurado sem implementação, falha **na hora de configurar** com mensagem clara — nunca silenciosamente na hora de enviar, com um cliente do outro lado esperando.
+**A fábrica olha o número, não a configuração global.** `SessionDriverFactory::forAsset(MetaAsset $asset)` lê o motor gravado naquele número e devolve o adaptador com o endereço e o token daquele número. A configuração global guarda só o **padrão para números novos**.
 
-**Na configuração do plugin**, um campo explícito:
-
-| Campo | Valor |
+| Onde | Campo |
 |---|---|
-| Motor | `whatsmeow` (padrão) · `baileys` (não implementado) |
-| Endereço do serviço | `http://127.0.0.1:8088` |
-| Token do serviço | guardado pelo `EncryptionHelper` |
-| Segredo do webhook | guardado pelo `EncryptionHelper` |
+| Configuração do plugin | Motor padrão para números novos: `whatsmeow` · `baileys` (não implementado) |
+| Em cada número | Motor · endereço do serviço · token · segredo do webhook |
 
-O campo mostra os dois e deixa claro qual está valendo. Escolher `baileys` hoje recusa e diz por quê. **Isso é deliberado:** uma opção listada e não implementada é honesta; uma opção que aceita e depois falha em produção não é.
+Cada número tem endereço e token próprios porque um serviço WhatsMeow e um serviço Baileys são **processos diferentes, em portas diferentes**. Dois números no mesmo motor podem compartilhar o mesmo serviço; nada no desenho obriga um processo por número.
 
-**O que eu não vou fazer, e é onde o risco desta seção mora.** Não vou desenhar a interface tentando antecipar o Baileys. Quando ele chegar, é provável que esses cinco métodos precisem mudar — talvez a autenticação seja outra, talvez o estado da sessão tenha um valor a mais. Tudo bem: com um adaptador e uma fábrica no lugar, essa mudança é local e tem um teste dizendo o que quebrou. Fingir que acertei a forma de primeira seria pior que admitir isso aqui.
+Escolher um motor sem implementação **recusa na hora de configurar**, com o motivo escrito — nunca aceita para falhar depois no envio, com um cliente do outro lado esperando.
 
-**Uma consequência de escopo.** O serviço em Go continua sendo parte desta entrega. O que a fábrica troca é o **adaptador do lado PHP**; um motor Baileys exigiria também um serviço Node novo, que não está nesta etapa nem na seguinte.
+### O webhook precisa saber qual segredo usar antes de confiar no corpo
+
+Com segredo por número, chega um problema que a versão de segredo único não tinha: quando um webhook bate na porta, qual chave eu uso para conferir a assinatura? A única pista de qual número é o corpo — e o corpo é exatamente o que a assinatura existe para provar. Escolher a chave lendo o corpo não verificado é confiar antes de verificar.
+
+**A solução é o serviço dizer qual chave usou, num cabeçalho:**
+
+```
+X-WhatsQr-Key: <id da conexão>
+X-WhatsQr-Signature: <HMAC-SHA256 do corpo>
+X-WhatsQr-Timestamp: <epoch>
+```
+
+O `Key` não é segredo e não precisa ser confiável: ele só **seleciona** qual chave tentar. Quem prova é a assinatura. Se o id não existe, ou a assinatura não bate com a chave daquele id, a requisição é recusada e nada do corpo é lido. É o mesmo raciocínio do `kid` de um JWT.
+
+Três regras que vão junto, e nenhuma é opcional:
+
+- **Comparação em tempo constante** (`hash_equals`). Comparar assinatura com `===` vaza o segredo byte a byte para quem medir o tempo das respostas.
+- **A assinatura cobre o timestamp**, e um timestamp fora de cinco minutos é recusado. Sem isso, um corpo assinado capturado uma vez pode ser reenviado para sempre.
+- **O id da conexão não é enumerável.** Sequencial entrega a topologia dos números a qualquer um que bata na rota.
 
 ## A sessão vai cair
 
@@ -154,7 +169,7 @@ Desenhadas e aprovadas em <https://claude.ai/artifact/XKQWTWepYCAwqe38GA8tKi>.
 
 **No serviço em Go:** testes de unidade sobre a máquina de estados da sessão (as transições entre `pairing`, `connected`, `reconnecting`, `logged_out`) e sobre a fila de reenvio do webhook. A biblioteca whatsmeow entra por interface, para o teste não precisar de um WhatsApp de verdade.
 
-**No plugin:** teste funcional do webhook — assinatura válida grava, assinatura inválida recusa, mensagem repetida não duplica. Teste do `WhatsAppSenderResolver` provando que um asset Graph vai para o Graph e um asset QR vai para o serviço. Teste da expiração da fila. Teste da fábrica: motor conhecido devolve o adaptador, motor sem implementação recusa na configuração e não na hora de enviar.
+**No plugin:** teste funcional do webhook — assinatura válida grava, assinatura inválida recusa, mensagem repetida não duplica. Teste do `WhatsAppSenderResolver` provando que um asset Graph vai para o Graph e um asset QR vai para o serviço. Teste da expiração da fila. Teste da fábrica: dois números com motores diferentes devolvem adaptadores diferentes, e motor sem implementação recusa na configuração e não na hora de enviar.
 
 **No Meta bundle:** a extração da interface é refactor puro. O teste é que o comportamento do Graph não mudou — os testes que já existem precisam continuar verdes sem edição, e é esse o critério.
 
