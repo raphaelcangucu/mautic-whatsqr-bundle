@@ -81,6 +81,42 @@ O `match` do executor **não muda**. A caixa **não muda**. O plugin novo pode s
 
 **O custo é real e precisa ser dito:** o `OutboundOperationExecutor` e o `WhatsAppSender` estão escritos num estilo comprimido, com linhas longas, e atendem três canais em produção. Extrair a interface vai dar um diff maior do que a mudança conceitual sugere. Esta parte vai primeiro, com teste, e sem nenhuma mudança de comportamento — o Graph continua fazendo exatamente o que faz hoje.
 
+## O motor é trocável, e a configuração diz qual está valendo
+
+WhatsMeow é a escolha de hoje, não uma premissa do desenho. Canal não homologado é território onde bibliotecas morrem: o projeto é abandonado, o protocolo muda e ninguém acompanha, ou a licença vira problema. Trocar o motor não pode significar reescrever o plugin.
+
+**Onde fica a costura.** Tanto o WhatsMeow quanto o Baileys rodam como serviço ao lado e falam HTTP — o que muda entre eles é o dialeto, não a natureza. Então a costura fica na borda HTTP do plugin, e não dentro do domínio dele:
+
+```php
+interface SessionDriverInterface
+{
+    public function openSession(MetaAsset $asset): SessionState;
+    public function sessionState(MetaAsset $asset): SessionState;
+    public function closeSession(MetaAsset $asset): void;
+    public function sendText(MetaAsset $asset, string $to, string $text, string $requestId): SentMessage;
+    public function verifyWebhook(string $body, string $signature): bool;
+}
+```
+
+Cinco métodos, e cada um existe porque o plugin **já precisa dele hoje** — não porque o Baileys talvez precise amanhã. `SessionState` e `SentMessage` são objetos do plugin, não a resposta crua do serviço: é o adaptador que traduz, e é por isso que o dialeto de cada motor não vaza para dentro.
+
+**A fábrica.** `SessionDriverFactory` recebe o nome do motor da configuração e devolve o adaptador. Um motor desconhecido, ou um configurado sem implementação, falha **na hora de configurar** com mensagem clara — nunca silenciosamente na hora de enviar, com um cliente do outro lado esperando.
+
+**Na configuração do plugin**, um campo explícito:
+
+| Campo | Valor |
+|---|---|
+| Motor | `whatsmeow` (padrão) · `baileys` (não implementado) |
+| Endereço do serviço | `http://127.0.0.1:8088` |
+| Token do serviço | guardado pelo `EncryptionHelper` |
+| Segredo do webhook | guardado pelo `EncryptionHelper` |
+
+O campo mostra os dois e deixa claro qual está valendo. Escolher `baileys` hoje recusa e diz por quê. **Isso é deliberado:** uma opção listada e não implementada é honesta; uma opção que aceita e depois falha em produção não é.
+
+**O que eu não vou fazer, e é onde o risco desta seção mora.** Não vou desenhar a interface tentando antecipar o Baileys. Quando ele chegar, é provável que esses cinco métodos precisem mudar — talvez a autenticação seja outra, talvez o estado da sessão tenha um valor a mais. Tudo bem: com um adaptador e uma fábrica no lugar, essa mudança é local e tem um teste dizendo o que quebrou. Fingir que acertei a forma de primeira seria pior que admitir isso aqui.
+
+**Uma consequência de escopo.** O serviço em Go continua sendo parte desta entrega. O que a fábrica troca é o **adaptador do lado PHP**; um motor Baileys exigiria também um serviço Node novo, que não está nesta etapa nem na seguinte.
+
 ## A sessão vai cair
 
 Não é exceção, é rotina. A Meta derruba, o aparelho fica sem internet, alguém desconecta pelo celular, catorze dias fora do ar desfazem o pareamento sozinhos.
@@ -118,7 +154,7 @@ Desenhadas e aprovadas em <https://claude.ai/artifact/XKQWTWepYCAwqe38GA8tKi>.
 
 **No serviço em Go:** testes de unidade sobre a máquina de estados da sessão (as transições entre `pairing`, `connected`, `reconnecting`, `logged_out`) e sobre a fila de reenvio do webhook. A biblioteca whatsmeow entra por interface, para o teste não precisar de um WhatsApp de verdade.
 
-**No plugin:** teste funcional do webhook — assinatura válida grava, assinatura inválida recusa, mensagem repetida não duplica. Teste do `WhatsAppSenderResolver` provando que um asset Graph vai para o Graph e um asset QR vai para o serviço. Teste da expiração da fila.
+**No plugin:** teste funcional do webhook — assinatura válida grava, assinatura inválida recusa, mensagem repetida não duplica. Teste do `WhatsAppSenderResolver` provando que um asset Graph vai para o Graph e um asset QR vai para o serviço. Teste da expiração da fila. Teste da fábrica: motor conhecido devolve o adaptador, motor sem implementação recusa na configuração e não na hora de enviar.
 
 **No Meta bundle:** a extração da interface é refactor puro. O teste é que o comportamento do Graph não mudou — os testes que já existem precisam continuar verdes sem edição, e é esse o critério.
 
@@ -129,6 +165,7 @@ Desenhadas e aprovadas em <https://claude.ai/artifact/XKQWTWepYCAwqe38GA8tKi>.
 - **Mídia** — foto, áudio, documento. Entra depois; o desenho do serviço já prevê a rota, mas a implementação não está aqui.
 - **Grupos.** O whatsmeow suporta; a caixa não tem conceito de conversa com muitos participantes.
 - **Disparo por campanha.** Etapa 2.
+- **O adaptador do Baileys.** A interface e a fábrica entram agora; a implementação, não. O campo de configuração mostra a opção e recusa, com o motivo.
 - **Vários clientes no mesmo serviço.** Até cinco números, todos de vocês. Isolamento entre clientes mudaria o desenho e não é preciso agora.
 
 ## Riscos, sem eufemismo
