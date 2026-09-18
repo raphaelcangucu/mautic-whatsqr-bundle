@@ -1,0 +1,207 @@
+<?php
+
+declare(strict_types=1);
+
+namespace MauticPlugin\MauticWhatsQrBundle\Driver;
+
+use MauticPlugin\MauticMetaBundle\Application\Exception\ChannelTemporarilyUnavailable;
+use MauticPlugin\MauticMetaBundle\Entity\MetaAsset;
+use MauticPlugin\MauticWhatsQrBundle\Domain\SentMessage;
+use MauticPlugin\MauticWhatsQrBundle\Domain\SessionState;
+use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
+use Symfony\Contracts\HttpClient\HttpClientInterface;
+
+/**
+ * O adaptador do unico motor implementado: o servico em Go, que fala com o WhatsApp
+ * pela biblioteca whatsmeow.
+ *
+ * O endereco e o token chegam prontos, por numero, porque e assim que a escolha de
+ * motor do desenho funciona: cada chip pode apontar para um processo diferente. Quem
+ * os le do asset e a fabrica; este objeto so sabe conversar.
+ *
+ * Toda a traducao mora aqui -- o dialeto do servico entra, SessionState e SentMessage
+ * saem, e nenhum "status" cru atravessa para a tela ou para a fila.
+ */
+final class WhatsMeowDriver implements SessionDriverInterface
+{
+    /**
+     * Teto de espera de uma chamada. Existe por causa do envio: sem teto, o servico
+     * pendurado segura a requisicao HTTP do atendente ate o PHP desistir, e a tela fica
+     * girando. Com teto, o estouro vira falha temporaria e a resposta entra na fila.
+     */
+    private const TIMEOUT_SECONDS = 10;
+
+    private string $baseUri;
+
+    public function __construct(
+        private readonly HttpClientInterface $http,
+        string $baseUri,
+        private readonly string $token,
+    ) {
+        $this->baseUri = rtrim($baseUri, '/');
+    }
+
+    public function openSession(MetaAsset $asset): SessionState
+    {
+        $body = $this->request('POST', '/sessions', ['id' => $this->sessionId($asset)]);
+
+        return $this->toSessionState($this->sessionId($asset), $body);
+    }
+
+    public function pairingQr(MetaAsset $asset): ?string
+    {
+        $id = $this->sessionId($asset);
+        // 409 e "essa sessao nao esta em pareamento", que e resposta e nao erro: ja
+        // conectou, ou ainda nao abriu. Devolver null aqui deixa a tela decidir o que
+        // dizer, em vez de transformar um estado normal em excecao.
+        $body = $this->request('GET', sprintf('/sessions/%s/qr', rawurlencode($id)), null, [409]);
+        $qr = trim((string) ($body['qr'] ?? ''));
+
+        return '' === $qr ? null : $qr;
+    }
+
+    public function closeSession(MetaAsset $asset): void
+    {
+        // 404 e aceito porque desligar o que ja nao existe alcancou o que se queria.
+        // Nao vale para 500: a rota devolve isso quando desconectou mas a credencial
+        // continua no disco, e engolir isso diria que o numero foi desligado quando ele
+        // ainda pode falar.
+        $this->request('DELETE', sprintf('/sessions/%s', rawurlencode($this->sessionId($asset))), null, [404]);
+    }
+
+    public function sendText(MetaAsset $asset, string $to, string $text, string $requestId): SentMessage
+    {
+        $body = $this->request('POST', sprintf('/sessions/%s/messages', rawurlencode($this->sessionId($asset))), [
+            'to'         => $to,
+            'text'       => $text,
+            'request_id' => $requestId,
+        ]);
+
+        return new SentMessage(trim((string) ($body['message_id'] ?? '')), $requestId);
+    }
+
+    /**
+     * O id da sessao e o externalId do asset. Uma sessao por QR nao tem numero no Graph
+     * -- AssetType::isGraphAsset() ja diz isso --, entao o campo guarda o id nao
+     * enumeravel pelo qual o servico, a configuracao e o webhook reconhecem este chip.
+     */
+    private function sessionId(MetaAsset $asset): string
+    {
+        $id = trim($asset->getExternalId());
+        if ('' === $id) {
+            // Sem id nao ha a quem pedir nada, e isso nao melhora com o tempo.
+            throw new \DomainException('Este numero nao tem id de sessao gravado; refaca o pareamento.');
+        }
+
+        return $id;
+    }
+
+    private function toSessionState(string $sessionId, array $body): SessionState
+    {
+        $status = trim((string) ($body['status'] ?? ''));
+        $known = [
+            'pairing'      => SessionState::PAIRING,
+            'connected'    => SessionState::CONNECTED,
+            'reconnecting' => SessionState::RECONNECTING,
+            'logged_out'   => SessionState::LOGGED_OUT,
+            'failed'       => SessionState::FAILED,
+        ];
+        if (!isset($known[$status])) {
+            // Um motor que passou a falar outra palavra e um problema de contrato, nao do
+            // envio. RuntimeException de proposito: e o que a fila le como desfecho
+            // desconhecido, e desconhecido e exatamente o que isto e.
+            throw new \RuntimeException(sprintf('O servico devolveu um estado que este plugin nao conhece: "%s".', $status));
+        }
+
+        $qr = trim((string) ($body['qr'] ?? ''));
+        $jid = trim((string) ($body['jid'] ?? ''));
+        $reason = trim((string) ($body['reason'] ?? ''));
+
+        return new SessionState(
+            '' !== trim((string) ($body['id'] ?? '')) ? trim((string) $body['id']) : $sessionId,
+            $known[$status],
+            '' === $qr ? null : $qr,
+            '' === $jid ? null : $jid,
+            '' === $reason ? null : $reason,
+        );
+    }
+
+    /**
+     * @param array<string,mixed>|null $payload
+     * @param list<int>                $tolerate codigos 4xx que o chamador trata como resposta
+     *
+     * @return array<string,mixed>
+     */
+    private function request(string $method, string $path, ?array $payload = null, array $tolerate = []): array
+    {
+        $options = ['auth_bearer' => $this->token, 'timeout' => self::TIMEOUT_SECONDS];
+        if (null !== $payload) {
+            $options['json'] = $payload;
+        }
+
+        try {
+            $response = $this->http->request($method, $this->baseUri.$path, $options);
+            $status = $response->getStatusCode();
+            $raw = $response->getContent(false);
+        } catch (TransportExceptionInterface $transport) {
+            // Servico fora do ar, conexao recusada, tempo esgotado. Esta e a linha que o
+            // desenho inteiro existe para ter: qualquer outra excecao aqui faz a
+            // OutboundQueue classificar como definitiva, e o atendente le "nao saiu" em
+            // dois segundos de uma mensagem que sairia sozinha quando o numero voltasse.
+            throw new ChannelTemporarilyUnavailable(
+                sprintf('O servico de WhatsApp por QR nao respondeu (%s %s).', $method, $path),
+                0,
+                $transport
+            );
+        }
+
+        if ($status >= 200 && $status < 300) {
+            return $this->decode($raw);
+        }
+        if (in_array($status, $tolerate, true)) {
+            return [];
+        }
+
+        $message = trim((string) ($this->decode($raw, false)['error'] ?? ''));
+        if ('' === $message) {
+            $message = sprintf('HTTP %d', $status);
+        }
+
+        // A fronteira e o proprio codigo, e nao o campo "temporary" do corpo: o servico
+        // ja alinha os dois, e ler duas fontes que podem discordar cria um caso em que
+        // ninguem sabe qual venceu. 408 e 429 entram porque um proxy no caminho pode
+        // devolve-los, e os dois passam sozinhos.
+        if ($status >= 500 || 408 === $status || 429 === $status) {
+            throw new ChannelTemporarilyUnavailable(sprintf('O servico de WhatsApp por QR esta indisponivel: %s', $message));
+        }
+
+        // 4xx e recusa do proprio servico que nao muda sozinha: sessao desconhecida,
+        // corpo invalido, numero sem segredo, token errado. \DomainException porque a
+        // OutboundQueue a le como falha definitiva -- retentar isto ocuparia a fila para
+        // sempre com um envio que nunca vai dar certo, e a mensagem certa para o
+        // atendente e "nao saiu".
+        throw new \DomainException(sprintf('O servico de WhatsApp por QR recusou: %s', $message));
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function decode(string $raw, bool $strict = true): array
+    {
+        if ('' === trim($raw)) {
+            return [];
+        }
+        try {
+            $decoded = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $malformed) {
+            if (!$strict) {
+                return [];
+            }
+            // Resposta ilegivel de um servico que respondeu: pode ter enviado. Nao vira
+            // falha temporaria de proposito -- retentar as cegas duplicaria a mensagem.
+            throw new \RuntimeException('O servico de WhatsApp por QR devolveu uma resposta ilegivel.', 0, $malformed);
+        }
+
+        return is_array($decoded) ? $decoded : [];
+    }
+}
