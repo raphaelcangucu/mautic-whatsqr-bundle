@@ -265,7 +265,26 @@ Não despachar job de uma conversa que tenha job anterior em estado não termina
 
 ---
 
-## Tarefa 7: A conexão de QR não aparece na tela do Meta
+## Tarefa 7: O canal novo não pode quebrar as telas do Meta
+
+> **Ampliada durante a execução.** A tarefa 2 descobriu dois `match` exaustivos em `Application/Connection/ConnectionDiagnostic.php` — linhas 107 e 134 — sem braço `default`. Uma conexão que tenha um asset de QR faz a tela de diagnóstico **estourar**, e o primeiro dos dois nem está dentro de um `try`. Isso é página de produção, e entra aqui.
+
+### 7a: O diagnóstico ignora assets que não são do Graph
+
+Uma sessão por QR não é um asset do Graph: não tem conjunto de permissões da Meta nem nó para consultar. **Não dê braços a ela** — a forma certa é o `ConnectionDiagnostic` filtrar os tipos não-Graph **antes** dos dois laços. Dar um braço afirmaria uma relação que não existe, e o segundo `match` não teria o que chamar.
+
+- [ ] **Passo 1: Teste** — uma conexão com asset de QR não estoura, e o diagnóstico dos assets oficiais dela continua idêntico.
+- [ ] **Passo 2: Rodar e ver falhar** com `UnhandledMatchError`.
+- [ ] **Passo 3: Filtrar antes dos laços**, por um predicado de "é do Graph", não por lista de tipos — lista de tipos vira o mesmo problema no próximo canal.
+- [ ] **Passo 4: Rodar. Commit.**
+
+### 7b: O rótulo do tipo novo
+
+`Form/Type/MetaAssetType.php` referencia `mautic.meta.ui.whatsapp_qr_session`, que não existe em nenhum dos dois arquivos de tradução. O menu mostra a chave crua.
+
+- [ ] Acrescentar em `Translations/en_US/messages.ini` e `Translations/pt_BR/messages.ini`, junto dos irmãos.
+
+### 7c: A conexão de QR não aparece na listagem do Meta
 
 **Arquivos:**
 - Modificar: o controlador/listagem de conexões do Meta
