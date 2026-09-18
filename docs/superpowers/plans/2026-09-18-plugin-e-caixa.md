@@ -239,6 +239,12 @@ O terceiro é o guarda: a janela de 24h é regra do WABA e **precisa continuar v
 
 **Desenho aprovado:** https://claude.ai/artifact/XKQWTWepYCAwqe38GA8tKi
 
+- [ ] **Passo 0: O `/health` precisa dizer o caso ruim, não só os bons.**
+
+  *(Descoberto no plano 2.)* Se o mesmo número acabar com duas credenciais no store — um `DELETE` que falhou no meio, um backup restaurado —, `Open` **recusa** abrir a sessão e registra. É a decisão certa: escolher uma abriria a errada em metade das vezes, calada. Mas hoje isso só existe no log, e a tela de Conexões lê o `/health`.
+
+  Sem expor esse estado, o atendente vê uma sessão que simplesmente não sobe, sem motivo escrito, e a saída — `DELETE` e parear de novo — não está em lugar nenhum da tela. **O `/health` ganha o estado, e a tela o mostra com o caminho de saída.** É mudança pequena dos dois lados, e sem ela o plano 2 entregou uma falha que ninguém consegue diagnosticar pela interface.
+
 - [ ] **Passo 1: Conexões** — número, situação, **quantas respostas estão na fila**, última mensagem. A coluna da fila não é decoração: é como alguém descobre que três clientes estão esperando.
 - [ ] **Passo 2: Parear** — um componente, três estados. O estado "não deu" distingue **expirou** de **o WhatsApp recusou**; só o primeiro oferece tentar de novo.
 - [ ] **Passo 3: Conferir em 390px de largura.** A tela de Conexões vai ser aberta do celular quando um número cair, que é justamente quando ninguém está na frente do computador.
