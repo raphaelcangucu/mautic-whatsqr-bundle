@@ -181,6 +181,28 @@ public function testAJobOfAConnectedNumberIsLeftAlone(): void
 
 ---
 
+## Tarefa 7b: O `maxAttempts`, e uma garantia que não pode ser atropelada
+
+> **Descoberto durante o plano 1.** A tarefa 5 de lá mediu: com `maxAttempts = 1`, o primeiro fracasso já bate o teto e o job vira `failed` **antes de qualquer reagendamento**. Ou seja, o backoff de duas horas que acabamos de construir é **inerte** até alguém subir esse número — e quem o define é a caixa, não a fila.
+
+Três lugares passam `1` hoje:
+
+| Onde | O quê |
+|---|---|
+| `ConversationActions.php` ~295 | O envio do atendente |
+| `ConversationActions.php` ~242 | O **retry manual** |
+| `Ai/AiWorker.php` | O envio da IA |
+
+**O retry manual tem um teste que afirma `maxAttempts = 1`** — `Tests/Functional/InboxPersistenceTest.php:274`. Isso é garantia deliberada de quem escreveu, não descuido: o atendente aperta "tentar de novo" e espera uma tentativa, não uma série silenciosa.
+
+- [ ] **Passo 1: Teste** — o envio do atendente **para asset QR** enfileira com `maxAttempts` suficiente para atravessar duas horas; para asset oficial continua `1`.
+- [ ] **Passo 2: Teste que o retry manual continua `1`** para os dois tipos. Se o teste existente do `InboxPersistenceTest` precisar mudar, **pare**: a garantia é de outra pessoa e mudá-la é decisão dela.
+- [ ] **Passo 3: Rodar, implementar, rodar.**
+- [ ] **Passo 4: A IA fica de fora** — resposta de IA parada duas horas não deve sair sozinha depois. Confirme que não mudou.
+- [ ] **Passo 5: Commit.**
+
+---
+
 ## Tarefa 8: As mudanças na caixa
 
 **Arquivos:** `mautic-inbox-bundle` — `Application/ReplyAvailability.php`, `Application/InboxQuery.php`, `Application/WhatsAppTemplates.php`, `Frontend/inbox/ConversationList.svelte`
