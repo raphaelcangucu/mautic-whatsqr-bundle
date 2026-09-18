@@ -10,7 +10,9 @@
 set -euo pipefail
 
 HOST="${WHATSQR_HOST:?defina WHATSQR_HOST, ex.: usuario@servidor}"
-DEST="${WHATSQR_DEST:-\$HOME/whatsqr}"
+# Relativo de proposito: o scp nao expande $HOME do lado remoto, e caminho
+# relativo ja cai no home do usuario.
+DEST="${WHATSQR_DEST:-whatsqr}"
 
 cd "$(dirname "$0")/../service"
 echo "==> compilando para linux/amd64, estatico"
@@ -18,9 +20,9 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o ../dist/whatsqr .
 file ../dist/whatsqr | grep -q 'statically linked' || { echo "RECUSADO: o binario nao ficou estatico"; exit 1; }
 
 echo "==> enviando"
-ssh "$HOST" "mkdir -p $DEST && mkdir -p \$HOME/.config/systemd/user"
+ssh "$HOST" "mkdir -p \"$DEST\" \$HOME/.config/systemd/user"
 scp -q ../dist/whatsqr "$HOST:$DEST/whatsqr.novo"
-scp -q ../deploy/whatsqr.service "$HOST:\$HOME/.config/systemd/user/whatsqr.service"
+scp -q ../deploy/whatsqr.service "$HOST:.config/systemd/user/whatsqr.service"
 
 # Troca atomica: no Linux, mover por cima de um binario em uso funciona — o processo
 # antigo continua com o inode antigo ate reiniciar.
