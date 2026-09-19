@@ -25,6 +25,21 @@ final readonly class SessionState
 
     private const KNOWN = [self::PAIRING, self::CONNECTED, self::RECONNECTING, self::LOGGED_OUT, self::FAILED];
 
+    /**
+     * A chave de `settings` do asset onde mora o estado gravado do numero, com uma das
+     * cinco palavras acima.
+     *
+     * Mora aqui, e nao junto das outras chaves na SessionDriverFactory, porque nem quem
+     * escreve nem quem le este campo e a fabrica: quem grava e o evento de sessao do
+     * webhook, e quem le sao a varredura que expira resposta parada e o compositor da
+     * caixa. A fabrica guarda o que ela mesma sela -- motor, endereco, token, segredo.
+     *
+     * Em `settings` e nao em `status` do asset por decisao do desenho: sair de `active`
+     * fecha o compositor e faz o retry devolver 409, e um numero que caiu e vai voltar
+     * nao deve calar a tela do atendente.
+     */
+    public const SETTING_STATUS = 'whatsqr_session_status';
+
     public function __construct(
         public string $sessionId,
         public string $status,
