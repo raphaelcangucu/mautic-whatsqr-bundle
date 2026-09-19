@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace MauticPlugin\MauticWhatsQrBundle\Tests\Unit\Support;
 
+use Doctrine\DBAL\Connection;
 use Doctrine\ORM\EntityManagerInterface;
 use Mautic\CampaignBundle\Executioner\RealTimeExecutioner;
 use Mautic\LeadBundle\Model\LeadModel;
@@ -142,6 +143,7 @@ trait InboundIngestorFixture
     {
         $entityManager = $this->createMock(EntityManagerInterface::class);
         $entityManager->method('isOpen')->willReturn(true);
+        $entityManager->method('getConnection')->willReturn($this->emptyContactTable());
         $entityManager->method('persist')->willReturnCallback(function (object $entity): void {
             $this->persisted[] = $entity;
             if ($entity instanceof MetaConversation) {
@@ -157,6 +159,27 @@ trait InboundIngestorFixture
         });
 
         return $entityManager;
+    }
+
+    /**
+     * O banco de contatos vazio, para a busca por telefone do ContactMatcher.
+     *
+     * Ela e SQL cru sobre a tabela de leads (ContactMatcher::byPhone), entao ela nao
+     * passa por repositorio nenhum e nao da para dubla-la mais acima. Devolver lista
+     * vazia e dizer "nenhum contato do CRM tem este telefone", que e o que estes testes
+     * sempre afirmaram: o que eles medem e a conversa e a mensagem que o numero por QR
+     * cria, nao o casamento com a base de contatos, que tem teste proprio no Meta bundle.
+     *
+     * Sem este duble a conexao vem nula e o fetchFirstColumn estoura -- que e o que
+     * acontece quando alguem acrescenta uma consulta crua a um caminho coberto por
+     * testes com EntityManager dublado.
+     */
+    private function emptyContactTable(): Connection
+    {
+        $connection = $this->createMock(Connection::class);
+        $connection->method('fetchFirstColumn')->willReturn([]);
+
+        return $connection;
     }
 
     private function conversationRepository(): MetaConversationRepository
