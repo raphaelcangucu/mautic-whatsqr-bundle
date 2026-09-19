@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waAdv"
 	"go.mau.fi/whatsmeow/types"
 )
@@ -174,4 +177,79 @@ func TestForgetTakesTheNumberAndLeavesNothingBehind(t *testing.T) {
 	if err := s.Forget(ctx, "5511999990000@s.whatsapp.net"); err != nil {
 		t.Errorf("Forget repetido: %v", err)
 	}
+}
+
+// The pairing window is short -- whatsmeow hands out six codes, the first good
+// for 60 seconds and the rest for 20 each, so the whole window is under three
+// minutes. What happens at the end of it decides whether the pairing screen
+// tells the truth.
+//
+// The QR channel does not always announce its own end: on some paths it simply
+// closes. The range loop then exits with the last code still stored, so the
+// service keeps serving a code that cannot work and keeps reporting `pairing`.
+// That is what a number stuck for nineteen hours looked like -- the screen said
+// "scan this", the service said pairing, and the code had been dead since three
+// minutes in.
+func TestAClosedQrChannelStopsOfferingTheDeadCode(t *testing.T) {
+	qrChan := make(chan whatsmeow.QRChannelItem, 1)
+	c := &whatsmeowClient{outbox: make(chan Event, 4), stopped: make(chan struct{})}
+
+	qrChan <- whatsmeow.QRChannelItem{Event: whatsmeow.QRChannelEventCode, Code: "codigo-vivo"}
+	pronto := make(chan struct{})
+	go func() { c.followQR(qrChan); close(pronto) }()
+
+	esperar(t, func() bool { return "codigo-vivo" == c.CurrentQR() }, "o codigo devia ter sido guardado")
+
+	close(qrChan)
+	<-pronto
+
+	if qr := c.CurrentQR(); "" != qr {
+		t.Fatalf("o codigo morto continuou sendo oferecido: %q", qr)
+	}
+
+	select {
+	case ev := <-c.outbox:
+		if EventFailed != ev.Kind {
+			t.Fatalf("esperava EventFailed, veio %v", ev.Kind)
+		}
+		// A tela distingue "expirou" de "o WhatsApp recusou", e so o primeiro
+		// oferece gerar outro codigo. Um motivo generico levaria o atendente a
+		// desistir de uma janela que so precisava ser reaberta.
+		if !strings.Contains(ev.Reason, "expirou") {
+			t.Fatalf("o motivo precisa dizer que expirou, veio %q", ev.Reason)
+		}
+	default:
+		t.Fatal("o fim da janela nao avisou ninguem")
+	}
+}
+
+// E o contrario: depois do pareamento o canal tambem fecha, e ali nada deu
+// errado. Avisar falha aqui apagaria da tela um numero que acabou de conectar.
+func TestAChannelThatClosesAfterPairingAnnouncesNoFailure(t *testing.T) {
+	qrChan := make(chan whatsmeow.QRChannelItem, 1)
+	c := &whatsmeowClient{outbox: make(chan Event, 4), stopped: make(chan struct{})}
+
+	qrChan <- whatsmeow.QRChannelItem{Event: whatsmeow.QRChannelSuccess.Event}
+	pronto := make(chan struct{})
+	go func() { c.followQR(qrChan); close(pronto) }()
+	close(qrChan)
+	<-pronto
+
+	select {
+	case ev := <-c.outbox:
+		t.Fatalf("nao devia anunciar nada depois do pareamento, veio %v (%s)", ev.Kind, ev.Reason)
+	default:
+	}
+}
+
+func esperar(t *testing.T, cond func() bool, msg string) {
+	t.Helper()
+	limite := time.Now().Add(2 * time.Second)
+	for time.Now().Before(limite) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal(msg)
 }

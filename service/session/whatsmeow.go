@@ -347,6 +347,9 @@ func (c *whatsmeowClient) firstQR(ctx context.Context, qrChan <-chan whatsmeow.Q
 
 // seguirQr acompanha as renovacoes e o desfecho do pareamento.
 func (c *whatsmeowClient) followQR(qrChan <-chan whatsmeow.QRChannelItem) {
+	// anunciado diz se a janela ja teve desfecho proprio. Sem isso, o fim do
+	// canal seria indistinguivel de um pareamento que deu certo.
+	anunciado := false
 	for item := range qrChan {
 		switch item.Event {
 		case whatsmeow.QRChannelEventCode:
@@ -355,8 +358,10 @@ func (c *whatsmeowClient) followQR(qrChan <-chan whatsmeow.QRChannelItem) {
 			// Quem muda o estado e o PairSuccess; aqui so se apaga o codigo
 			// para a tela nao continuar oferecendo um QR ja usado.
 			c.setQR("")
+			anunciado = true
 		default:
 			c.setQR("")
+			anunciado = true
 			// A tela de pareamento distingue "expirou" de "o WhatsApp
 			// recusou", e so o primeiro oferece tentar de novo. Por isso o
 			// motivo viaja com o desfecho do whatsmeow dentro, em vez de um
@@ -368,6 +373,23 @@ func (c *whatsmeowClient) followQR(qrChan <-chan whatsmeow.QRChannelItem) {
 			c.emit(Event{Kind: EventFailed, Reason: reason})
 		}
 	}
+
+	if anunciado {
+		return
+	}
+
+	// O canal acabou sem dizer por que. Acontece: o emissor do whatsmeow tem
+	// caminhos em que ele so fecha a saida, e a janela inteira dura menos de
+	// tres minutos -- seis codigos, o primeiro de 60 segundos e os outros de 20.
+	//
+	// Sem este fecho, o ultimo codigo fica guardado para sempre: o servico
+	// continua entregando um QR que nao pareia mais e continua dizendo
+	// "pareando". A tela pede para escanear, o atendente escaneia, o WhatsApp
+	// recusa, e nao ha nada escrito em lugar nenhum dizendo que a janela fechou
+	// ha horas. Foi exatamente assim que um numero ficou dezenove horas parado
+	// oferecendo um codigo morto.
+	c.setQR("")
+	c.emit(Event{Kind: EventFailed, Reason: "a janela de pareamento expirou sem que ninguem escaneasse"})
 }
 
 func (c *whatsmeowClient) setQR(qr string) {
