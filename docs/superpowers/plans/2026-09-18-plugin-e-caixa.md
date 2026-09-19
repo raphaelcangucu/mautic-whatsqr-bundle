@@ -209,6 +209,12 @@ Três lugares passam `1` hoje:
 
 Quatro mudanças pequenas e uma regra: **a suíte inteira do inbox precisa continuar verde.** São 72 testes, e eles cobrem a tela que sua equipe usa todo dia.
 
+- [ ] **Passo 0: Fechar o compositor quando o telefone nao foi resolvido**
+
+  *(Descoberto na tarefa 5.)* O `ReplyAvailability` nao tem ramo para telefone nao resolvido — so janela de 24h, canal indisponivel e comentario. Hoje a conversa de um JID opaco entra na caixa com a mensagem legivel e **o botao de responder aberto**. O atendente escreve, manda, e o envio falha em definitivo.
+
+  O dado ja esta gravado: a mensagem carrega o motivo por escrito e o destinatario vem com prefixo `jid:`. Falta o ramo que le isso.
+
 - [ ] **Passo 1: Testes, antes de tocar em qualquer coisa**
 
 ```php
@@ -232,6 +238,23 @@ O terceiro é o guarda: a janela de 24h é regra do WABA e **precisa continuar v
 `ConversationList.svelte` desenha `WhatsApp · QR` quando o tipo for de sessão. `npm test` verde.
 
 - [ ] **Passo 5: A suíte inteira do inbox verde. Commit.**
+
+---
+
+## Tarefa 8b: Duas correcoes no Meta bundle que a tarefa 5 contornou
+
+*(Descobertas durante a execucao. As duas tem contorno funcionando no plugin; o contorno e que e o problema.)*
+
+**`ConversationManager::record()` apaga a marca de telefone nao resolvido.** Ele canoniza todo destinatario de whatsapp tirando o que nao e digito. Num identificador opaco sobram digitos que **parecem telefone** — exatamente o destinatario inventado que o desenho proibe. O plugin hoje devolve o prefixo logo depois de `record()`, o que funciona e depende de rodar na linha seguinte para sempre.
+
+- [ ] Teste: um destinatario marcado atravessa `record()` intacto.
+- [ ] `record()` nao canoniza destinatario ja marcado.
+- [ ] Remover o contorno do plugin, e o teste dele passa a ser o do Meta bundle.
+
+**`ContactMatcher::match()` so casa por telefone quando o asset e `WhatsAppPhoneNumber`.** Asset de QR nunca casa contato, exceto por `contact_match_field`. Sem contato, a conversa aparece na caixa **sem contato ligado** — sem historico, sem campos, sem campanha — e `campaigns->dispatch()` devolve falso sempre.
+
+- [ ] Decidir se o casamento por telefone vale para asset de QR. **Provavelmente sim**: o telefone e o mesmo numero de cliente, venha por qual canal vier.
+- [ ] Teste antes de mexer: o casamento dos canais oficiais nao muda.
 
 ---
 
