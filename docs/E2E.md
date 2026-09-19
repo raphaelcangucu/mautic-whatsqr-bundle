@@ -56,7 +56,11 @@ termina em banimento.
 
 1. Abrir a sessão pela tela de Conexões, não por `curl` — é a tela que precisa
    ser provada.
-2. E2E 4 é o mais importante, e **anotar o tempo real** faz parte dele. A ordem
+2. E2E 4 é o mais importante, e **anotar o tempo real** faz parte dele. Use
+   `bin/medir-fila.sh <id-da-conversa>`: ele imprime uma linha a cada cinco
+   segundos com quantas respostas estão pendentes, em retry e enviadas. Está
+   escrito de antemão de propósito — ninguém escreve isso com o celular na mão e
+   o cronômetro correndo. A ordem
    por conversa foi resolvida dentro do `findDue()`, e isso tem um custo
    conhecido: duas mensagens vencidas da mesma conversa não saem no mesmo lote.
    Com varredura de minuto em minuto, três respostas represadas gotejam por três
