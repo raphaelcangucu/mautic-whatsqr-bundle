@@ -18,6 +18,7 @@ use MauticPlugin\MauticMetaBundle\Security\CredentialVault;
 use MauticPlugin\MauticMetaBundle\Security\WebhookSignatureVerifier;
 use MauticPlugin\MauticWhatsQrBundle\Controller\WebhookController;
 use MauticPlugin\MauticWhatsQrBundle\Driver\SessionDriverFactory;
+use MauticPlugin\MauticWhatsQrBundle\Tests\Unit\Support\InboundIngestorFixture;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
 use Symfony\Component\HttpClient\MockHttpClient;
@@ -32,6 +33,8 @@ use Symfony\Component\HttpFoundation\Response;
  */
 final class WebhookControllerTest extends TestCase
 {
+    use InboundIngestorFixture;
+
     /**
      * As linhas que "ficaram gravadas", por chave de evento. Faz as vezes da tabela
      * meta_webhook_events: o que interessa afirmar e quantas linhas distintas o mesmo
@@ -71,9 +74,11 @@ final class WebhookControllerTest extends TestCase
         self::assertSame(Response::HTTP_OK, $response->getStatusCode());
         $decoded = json_decode((string) $response->getContent(), true);
         self::assertTrue($decoded['received']);
-        // A porta reconhece o tipo e para ai: gravar conversa e mensagem e a tarefa 5.
         self::assertSame('message', $decoded['type']);
         self::assertCount(1, $this->stored);
+        // E o corpo conferido seguiu para quem grava: a costura da tarefa 5 esta fechada,
+        // e nao e mais a porta que decide o que fazer com a mensagem.
+        self::assertCount(1, $this->persistedMessages());
     }
 
     public function testAnInvalidSignatureIsRefused(): void
@@ -183,6 +188,10 @@ final class WebhookControllerTest extends TestCase
             // um duble aqui deixaria de afirmar justamente a parte que importa.
             new WebhookSignatureVerifier(),
             $this->ingestor(),
+            // O ingestor de entrada de verdade, sobre um banco de memoria. Um duble aqui
+            // concordaria com qualquer coisa, e o que esta suite passou a afirmar com a
+            // tarefa 5 e que a porta entrega o corpo conferido a quem grava.
+            $this->inboundIngestor(),
             new NullLogger(),
         );
     }

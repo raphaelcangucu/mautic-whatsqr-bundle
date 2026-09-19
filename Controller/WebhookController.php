@@ -9,6 +9,7 @@ use MauticPlugin\MauticMetaBundle\Domain\AssetType;
 use MauticPlugin\MauticMetaBundle\Entity\MetaAsset;
 use MauticPlugin\MauticMetaBundle\Entity\MetaAssetRepository;
 use MauticPlugin\MauticMetaBundle\Security\WebhookSignatureVerifier;
+use MauticPlugin\MauticWhatsQrBundle\Application\InboundIngestor;
 use MauticPlugin\MauticWhatsQrBundle\Domain\WebhookEventType;
 use MauticPlugin\MauticWhatsQrBundle\Driver\SessionDriverFactory;
 use Psr\Log\LoggerInterface;
@@ -67,6 +68,7 @@ final class WebhookController
         private readonly SessionDriverFactory $drivers,
         private readonly WebhookSignatureVerifier $verifier,
         private readonly WebhookIngestor $ingestor,
+        private readonly InboundIngestor $inbound,
         private readonly LoggerInterface $logger,
     ) {
     }
@@ -151,14 +153,25 @@ final class WebhookController
             return new JsonResponse(['received' => true, 'type' => $type, 'duplicate' => true]);
         }
 
-        // ------------------------------------------------------------------
-        // A costura da tarefa 5: com $asset, $type e $payload ja conferidos, e aqui que
-        // entram MetaConversation/MetaMessage e a chamada a messagePersisted(). Quando
-        // entrar, o complete() abaixo passa para depois do processamento e ganha o
-        // try/catch que marca o evento como `failed` -- e assim que ele segue retentavel
-        // em vez de sumir. Hoje a porta nao processa nada, e dizer isso e mais honesto
-        // que um try/catch sem nada dentro.
-        // ------------------------------------------------------------------
+        try {
+            $this->inbound->ingest($asset, $payload);
+        } catch (\Throwable $exception) {
+            // O evento fica `failed`, e e assim que ele continua retentavel: o ingest() do
+            // Meta bundle reabre um evento nesse estado quando o mesmo id volta. Marcar
+            // como processado o que estourou perderia mensagem de cliente em silencio.
+            $this->ingestor->complete((int) $ingested['eventId'], $exception);
+            $this->logger->error(sprintf(
+                'whatsqr: falha ao processar evento "%s" da chave "%s" -- %s',
+                (string) $payload['id'],
+                $key,
+                $exception->getMessage()
+            ));
+
+            // 500 de proposito: o remetente so para de tentar com um 2xx, e este e o unico
+            // caso em que insistir e o certo -- o corpo ja provou quem o assinou.
+            return new JsonResponse(['received' => false, 'error' => 'Processing failed.'], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+
         $this->ingestor->complete((int) $ingested['eventId']);
 
         return new JsonResponse(['received' => true, 'type' => $type, 'duplicate' => false]);
