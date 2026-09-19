@@ -14,7 +14,6 @@ use MauticPlugin\MauticMetaBundle\Application\Support\InboxIntegrationInterface;
 use MauticPlugin\MauticMetaBundle\Application\WhatsApp\ConsentKeywordMatcher;
 use MauticPlugin\MauticMetaBundle\Application\WhatsApp\PhoneNormalizer;
 use MauticPlugin\MauticMetaBundle\Entity\MetaAsset;
-use MauticPlugin\MauticMetaBundle\Entity\MetaConversation;
 use MauticPlugin\MauticMetaBundle\Entity\MetaMessage;
 use MauticPlugin\MauticMetaBundle\Entity\MetaMessageRepository;
 use MauticPlugin\MauticWhatsQrBundle\Domain\InboundJid;
@@ -181,10 +180,7 @@ final class InboundIngestor
         $this->entityManager->persist($message);
         $this->entityManager->flush();
 
-        $conversation = $this->conversations->record($message);
-        if (!$resolved) {
-            $this->keepUnresolvedRecipient($conversation, $recipient);
-        }
+        $this->conversations->record($message);
 
         // O aviso, que e o ponto desta tarefa. Depois de `record()`, nunca antes: sem
         // conversa ligada a caixa desiste no primeiro if, calada.
@@ -225,27 +221,5 @@ final class InboundIngestor
 
             return $jid->unresolvedRecipient();
         }
-    }
-
-    /**
-     * Devolve a marca que o Meta bundle acabou de apagar.
-     *
-     * `ConversationManager::record()` canoniza todo destinatario de whatsapp como
-     * telefone: tira o que nao e digito e grava o que sobrou. Num identificador de
-     * privacidade o que sobra sao digitos que PARECEM telefone, e a conversa passaria a
-     * anunciar um numero para discar que nao chega em ninguem.
-     *
-     * A correcao e aqui, e nao la, porque la e outro repositorio: o lugar certo seria o
-     * proprio `record()` nao canonizar destinatario marcado como sem telefone.
-     */
-    private function keepUnresolvedRecipient(MetaConversation $conversation, string $recipient): void
-    {
-        if ($conversation->getRecipient() === $recipient) {
-            return;
-        }
-
-        $conversation->setRecipient($recipient);
-        $this->entityManager->persist($conversation);
-        $this->entityManager->flush();
     }
 }
