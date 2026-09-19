@@ -26,6 +26,7 @@ use MauticPlugin\MauticMetaBundle\Entity\MetaConnection;
 use MauticPlugin\MauticMetaBundle\Entity\MetaMessage;
 use MauticPlugin\MauticMetaBundle\Entity\MetaMessageRepository;
 use MauticPlugin\MauticWhatsQrBundle\Application\InboundIngestor;
+use MauticPlugin\MauticWhatsQrBundle\Application\SessionStateRecorder;
 use Psr\Log\NullLogger;
 
 /**
@@ -106,6 +107,10 @@ trait InboundIngestorFixture
                 new NullLogger(),
             ),
             new WebhookAdapterDispatcher($entityManager, $this->createMock(MetaAdapterDeliveryRepository::class)),
+            // O gravador de verdade, e nao um duble, pelo mesmo motivo do resto daqui: o
+            // que a tarefa acrescenta e o estado do numero chegando em `settings`, e um
+            // duble so afirmaria que o ingestor chamou alguem.
+            new SessionStateRecorder($entityManager, new NullLogger()),
             new NullLogger(),
         );
     }
@@ -267,6 +272,27 @@ trait InboundIngestorFixture
                 'timestamp' => time(),
                 'unsupported' => $unsupported,
             ],
+        ];
+    }
+
+    /**
+     * O corpo de um evento de sessao -- o mesmo tipo `payload` do sender.go, no ramo
+     * `session.NoticeSession`, que nao leva nem `message` nem `status` dentro.
+     *
+     * O `id` e aleatorio porque do lado de la ele tambem e: uma sessao cai, volta e cai de
+     * novo, e as duas quedas sao eventos diferentes -- chave derivada do estado faria a
+     * segunda sumir no dedupe do Mautic e a tela mostraria a sessao no ar depois de ela
+     * ter caido.
+     */
+    private function sessionEvent(string $state, string $jid = '5511333333333@s.whatsapp.net', string $sessionId = 'sess-atendimento'): array
+    {
+        return [
+            'id' => 'session:'.bin2hex(random_bytes(8)),
+            'type' => 'session',
+            'session_id' => $sessionId,
+            'state' => $state,
+            'jid' => $jid,
+            'object' => 'whatsapp_qr_session',
         ];
     }
 }

@@ -63,6 +63,7 @@ final class InboundIngestor
         private readonly InboxIntegrationInterface $inbox,
         private readonly CampaignMessageDispatcher $campaigns,
         private readonly WebhookAdapterDispatcher $adapters,
+        private readonly SessionStateRecorder $sessions,
         private readonly LoggerInterface $logger,
     ) {
     }
@@ -83,10 +84,23 @@ final class InboundIngestor
      */
     public function ingest(MetaAsset $asset, array $payload): ?MetaMessage
     {
-        if (WebhookEventType::MESSAGE !== trim((string) ($payload['type'] ?? ''))) {
+        $type = trim((string) ($payload['type'] ?? ''));
+
+        if (WebhookEventType::SESSION === $type) {
+            // Queda de sessao e estado do numero, nao conversa: nao ha bolha a gravar, e
+            // gravar uma encheria a caixa do que ninguem escreveu. Mas "nao ha bolha" nao
+            // e "nao ha nada a fazer", e essa confusao foi o que este ramo fez ate aqui --
+            // enquanto ele devolvia nulo, nada gravava o estado do numero em lugar nenhum,
+            // e a varredura das duas horas rodava todo minuto sem nunca achar numero
+            // caido. Continua devolvendo null, porque o retorno e a mensagem gravada.
+            $this->sessions->record($asset, $payload);
+
+            return null;
+        }
+
+        if (WebhookEventType::MESSAGE !== $type) {
             // Status de entrega so tem o que atualizar depois que existir mensagem de
-            // saida (tarefa 6), e queda de sessao e estado do numero, nao conversa --
-            // gravar bolha por evento de sessao encheria a caixa do que ninguem escreveu.
+            // saida (tarefa 6).
             $this->logger->debug('whatsqr: evento sem conversa a gravar', ['type' => $payload['type'] ?? null]);
 
             return null;

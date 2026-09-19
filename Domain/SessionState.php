@@ -40,6 +40,31 @@ final readonly class SessionState
      */
     public const SETTING_STATUS = 'whatsqr_session_status';
 
+    /**
+     * A chave de `settings` onde mora o JID com que o numero pareou.
+     *
+     * Ao lado do estado porque e a outra metade da mesma pergunta: "este numero esta no
+     * ar?" e "com qual chip?" so servem juntas. O servico ja recusa reconexao com JID
+     * diferente (checkJID, em service/session/state.go); guardar o JID aqui e o que
+     * permite ao Mautic contar a mesma historia sem ter de perguntar a ele -- e e o que a
+     * tela de Conexoes mostra quando pede para escanear de novo, porque "escaneie de
+     * novo" sem o chip por escrito nao diz com qual celular.
+     */
+    public const SETTING_JID = 'whatsqr_session_jid';
+
+    /**
+     * @return list<string>
+     */
+    public static function all(): array
+    {
+        return self::KNOWN;
+    }
+
+    public static function isKnown(string $status): bool
+    {
+        return in_array($status, self::KNOWN, true);
+    }
+
     public function __construct(
         public string $sessionId,
         public string $status,
@@ -50,7 +75,7 @@ final readonly class SessionState
         if ('' === trim($sessionId)) {
             throw new \InvalidArgumentException('Um estado de sessao sem id nao diz de qual numero fala.');
         }
-        if (!in_array($status, self::KNOWN, true)) {
+        if (!self::isKnown($status)) {
             // Guarda de ultimo recurso. Quem traduz o dialeto e o adaptador, e um estado
             // desconhecido chegando aqui significa que ele deixou passar -- melhor
             // estourar do que gravar em `settings` uma palavra que ninguem mais le.
