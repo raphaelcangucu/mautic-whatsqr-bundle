@@ -49,9 +49,9 @@ Se não for resolvido, essas tarefas entregam o teste escrito e **não executado
 
 ## Tarefa 1: O esqueleto do plugin
 
-- [ ] Criar `MauticWhatsQrBundle.php`, `Config/config.php`, `composer.json`, a rota pública do webhook.
-- [ ] **Passo de verificação:** o Mautic lista o plugin em Configurações e não quebra nenhuma página. Um plugin que impede o painel de abrir é o pior primeiro dia possível.
-- [ ] Commit.
+- [x] Criar `MauticWhatsQrBundle.php`, `Config/config.php`, `composer.json`, a rota pública do webhook.
+- [x] **Passo de verificação:** o Mautic lista o plugin em Configurações e não quebra nenhuma página. Um plugin que impede o painel de abrir é o pior primeiro dia possível.
+- [x] Commit.
 
 ---
 
@@ -59,7 +59,7 @@ Se não for resolvido, essas tarefas entregam o teste escrito e **não executado
 
 **Teste:** `Tests/Unit/Driver/WhatsMeowDriverTest.php`
 
-- [ ] **Passo 1: Testes, com a rede injetada**
+- [x] **Passo 1: Testes, com a rede injetada**
 
 ```php
 public function testOpenSessionReturnsPairingWithAQr(): void
@@ -70,7 +70,7 @@ public function testAnUnreachableServiceRaisesChannelTemporarilyUnavailable(): v
 
 O último é a cola com o plano 1: serviço fora do ar **precisa** virar a falha temporária. Se virar qualquer outra coisa, a fila classifica como permanente e o atendente vê "não saiu" em dois segundos — que é exatamente o defeito que este trabalho existe para não ter.
 
-- [ ] **Passo 2: Rodar, implementar, rodar. Commit.**
+- [x] **Passo 2: Rodar, implementar, rodar. Commit.**
 
 ---
 
@@ -78,7 +78,7 @@ O último é a cola com o plano 1: serviço fora do ar **precisa** virar a falha
 
 **Teste:** `Tests/Unit/Driver/SessionDriverFactoryTest.php`
 
-- [ ] **Passo 1: Testes**
+- [x] **Passo 1: Testes**
 
 ```php
 public function testTwoNumbersWithDifferentEnginesGetDifferentDrivers(): void
@@ -88,7 +88,7 @@ public function testTheRefusalHappensWhenConfiguring(): void
 
 O terceiro é a regra: recusar **na configuração**, nunca na hora de enviar com um cliente esperando.
 
-- [ ] **Passo 2: Rodar, implementar, rodar. Commit.**
+- [x] **Passo 2: Rodar, implementar, rodar. Commit.**
 
 ---
 
@@ -98,7 +98,7 @@ O terceiro é a regra: recusar **na configuração**, nunca na hora de enviar co
 
 Esta é a rota exposta à internet. Os testes vêm antes por isso.
 
-- [ ] **Passo 1: Testes**
+- [x] **Passo 1: Testes**
 
 ```php
 public function testAValidSignatureIsAccepted(): void
@@ -111,14 +111,14 @@ public function testAnUnknownKeyIdIsRefusedWithoutReadingTheBody(): void
 
 O terceiro é o que impede um serviço comprometido de falar por qualquer número. O quarto fecha o replay: sem ele, um `session: logged_out` capturado uma vez e reenviado em laço mantém o canal marcado como caído para sempre.
 
-- [ ] **Passo 2: Rodar e ver falhar.**
-- [ ] **Passo 3: Implementar**
+- [x] **Passo 2: Rodar e ver falhar.**
+- [x] **Passo 3: Implementar**
 
 Reusar o `WebhookSignatureVerifier` do Meta bundle — ele já faz `hash_equals`. **Não escreva outro**; é ali que nasce um `===` de string que vaza o segredo pelo tempo de resposta.
 
 A ordem importa: ler o cabeçalho `X-WhatsQr-Key` → achar a conexão → conferir assinatura sobre timestamp+corpo → **só então** ler o corpo.
 
-- [ ] **Passo 4: Rodar. Commit.**
+- [x] **Passo 4: Rodar. Commit.**
 
 ---
 
@@ -126,7 +126,7 @@ A ordem importa: ler o cabeçalho `X-WhatsQr-Key` → achar a conexão → confe
 
 **Teste:** `Tests/Functional/InboundIngestorTest.php`
 
-- [ ] **Passo 1: Testes**
+- [x] **Passo 1: Testes**
 
 ```php
 public function testItCreatesTheConversationAndTheMessage(): void
@@ -141,7 +141,7 @@ O terceiro trata o JID opaco: conversa criada, marcada, compositor fechado com m
 
 O quarto é a degradação de mídia: `messageType = 'unsupported'`, que a caixa **já sabe renderizar** com um texto pedindo para reenviar. O cliente manda a foto do boleto e o atendente ao menos vê que veio algo.
 
-- [ ] **Passo 2: Rodar, implementar, rodar. Commit.**
+- [x] **Passo 2: Rodar, implementar, rodar. Commit.**
 
 ---
 
@@ -149,7 +149,7 @@ O quarto é a degradação de mídia: `messageType = 'unsupported'`, que a caixa
 
 **Teste:** `Tests/Unit/Transport/QrTransportTest.php`
 
-- [ ] **Passo 1: Testes**
+- [x] **Passo 1: Testes**
 
 ```php
 public function testItTranslatesAGraphTextPayload(): void
@@ -158,8 +158,8 @@ public function testATemplatePayloadIsRefusedWithAClearReason(): void
 
 O segundo existe porque o canal não sabe mandar template, e a recusa precisa dizer isso — não estourar com erro de chave faltando.
 
-- [ ] **Passo 2: Registrar no resolvedor do plano 1**, por tag no contêiner.
-- [ ] **Passo 3: Rodar, implementar, rodar. Commit.**
+- [x] **Passo 2: Registrar no resolvedor do plano 1**, por tag no contêiner.
+- [x] **Passo 3: Rodar, implementar, rodar. Commit.**
 
 ---
 
@@ -167,7 +167,7 @@ O segundo existe porque o canal não sabe mandar template, e a recusa precisa di
 
 **Teste:** `Tests/Functional/ExpireQueuedCommandTest.php`
 
-- [ ] **Passo 1: Testes**
+- [x] **Passo 1: Testes**
 
 ```php
 public function testAJobQueuedForOverTwoHoursBecomesFailed(): void
@@ -175,9 +175,9 @@ public function testTheReasonSaysTheNumberWasDisconnected(): void
 public function testAJobOfAConnectedNumberIsLeftAlone(): void
 ```
 
-- [ ] **Passo 2: Rodar, implementar, rodar.**
-- [ ] **Passo 3: Agendar** junto dos comandos que o Mautic já roda. Um comando que ninguém agenda é código morto.
-- [ ] **Passo 4: Commit.**
+- [x] **Passo 2: Rodar, implementar, rodar.**
+- [x] **Passo 3: Agendar** junto dos comandos que o Mautic já roda. Um comando que ninguém agenda é código morto.
+- [x] **Passo 4: Commit.**
 
 ---
 
@@ -191,10 +191,10 @@ public function testAJobOfAConnectedNumberIsLeftAlone(): void
 | `ReplyAvailability` (tarefa 8) | O compositor nao sabe que o numero caiu |
 | A tela de Conexoes (tarefa 9) | Nao tem estado para mostrar |
 
-- [ ] **Passo 1: Testes** — cada estado que o servico emite grava a chave; estado desconhecido nao apaga o que estava la; evento de sessao de um numero nao mexe em outro.
-- [ ] **Passo 2:** O evento tambem precisa gravar o **JID pareado** no pareamento, que e o que barra a volta com outro chip do lado do Mautic.
-- [ ] **Passo 3:** `logged_out` e o caso que a tela precisa destacar — pede pareamento de novo, e a fila daquele numero nao vai sair sozinha.
-- [ ] **Passo 4: Commit.**
+- [x] **Passo 1: Testes** — cada estado que o servico emite grava a chave; estado desconhecido nao apaga o que estava la; evento de sessao de um numero nao mexe em outro.
+- [x] **Passo 2:** O evento tambem precisa gravar o **JID pareado** no pareamento, que e o que barra a volta com outro chip do lado do Mautic.
+- [x] **Passo 3:** `logged_out` e o caso que a tela precisa destacar — pede pareamento de novo, e a fila daquele numero nao vai sair sozinha.
+- [x] **Passo 4: Commit.**
 
 **Atencao ao que NAO fazer:** o estado vai para `settings`, **nunca** para `status` do asset. O `ReplyAvailability` fecha o compositor quando o asset sai de `active`, e a queda precisa manter o compositor aberto — e o `retry` passa a devolver 409.
 
@@ -214,11 +214,11 @@ Três lugares passam `1` hoje:
 
 **O retry manual tem um teste que afirma `maxAttempts = 1`** — `Tests/Functional/InboxPersistenceTest.php:274`. Isso é garantia deliberada de quem escreveu, não descuido: o atendente aperta "tentar de novo" e espera uma tentativa, não uma série silenciosa.
 
-- [ ] **Passo 1: Teste** — o envio do atendente **para asset QR** enfileira com `maxAttempts` suficiente para atravessar duas horas; para asset oficial continua `1`.
-- [ ] **Passo 2: Teste que o retry manual continua `1`** para os dois tipos. Se o teste existente do `InboxPersistenceTest` precisar mudar, **pare**: a garantia é de outra pessoa e mudá-la é decisão dela.
-- [ ] **Passo 3: Rodar, implementar, rodar.**
-- [ ] **Passo 4: A IA fica de fora** — resposta de IA parada duas horas não deve sair sozinha depois. Confirme que não mudou.
-- [ ] **Passo 5: Commit.**
+- [x] **Passo 1: Teste** — o envio do atendente **para asset QR** enfileira com `maxAttempts` suficiente para atravessar duas horas; para asset oficial continua `1`.
+- [x] **Passo 2: Teste que o retry manual continua `1`** para os dois tipos. Se o teste existente do `InboxPersistenceTest` precisar mudar, **pare**: a garantia é de outra pessoa e mudá-la é decisão dela.
+- [x] **Passo 3: Rodar, implementar, rodar.**
+- [x] **Passo 4: A IA fica de fora** — resposta de IA parada duas horas não deve sair sozinha depois. Confirme que não mudou.
+- [x] **Passo 5: Commit.**
 
 ---
 
@@ -228,13 +228,13 @@ Três lugares passam `1` hoje:
 
 Quatro mudanças pequenas e uma regra: **a suíte inteira do inbox precisa continuar verde.** São 72 testes, e eles cobrem a tela que sua equipe usa todo dia.
 
-- [ ] **Passo 0: Fechar o compositor quando o telefone nao foi resolvido**
+- [x] **Passo 0: Fechar o compositor quando o telefone nao foi resolvido**
 
   *(Descoberto na tarefa 5.)* O `ReplyAvailability` nao tem ramo para telefone nao resolvido — so janela de 24h, canal indisponivel e comentario. Hoje a conversa de um JID opaco entra na caixa com a mensagem legivel e **o botao de responder aberto**. O atendente escreve, manda, e o envio falha em definitivo.
 
   O dado ja esta gravado: a mensagem carrega o motivo por escrito e o destinatario vem com prefixo `jid:`. Falta o ramo que le isso.
 
-- [ ] **Passo 1: Testes, antes de tocar em qualquer coisa**
+- [x] **Passo 1: Testes, antes de tocar em qualquer coisa**
 
 ```php
 public function testTheTwentyFourHourWindowDoesNotApplyToAQrAsset(): void
@@ -245,18 +245,18 @@ public function testTheTemplatePathRefusesAQrAssetWithItsOwnReason(): void
 
 O terceiro é o guarda: a janela de 24h é regra do WABA e **precisa continuar valendo** para os números oficiais. Mexer nela sem esse teste quebra o canal homologado em silêncio.
 
-- [ ] **Passo 2: Rodar e ver falhar.**
-- [ ] **Passo 3: Implementar**
+- [x] **Passo 2: Rodar e ver falhar.**
+- [x] **Passo 3: Implementar**
 
 - `ReplyAvailability` não aplica a janela a asset QR, e lê "reconectando" de `settings` — **nunca de `status`**, porque sair de `active` fecha o compositor e faz o `retry` devolver 409.
 - `InboxQuery` acrescenta o tipo do asset ao payload da conversa. Hoje ele manda `id`, `name`, `handle` e `phone`, e nada mais — confirmado no código.
 - `WhatsAppTemplates` recusa asset QR com mensagem própria.
 
-- [ ] **Passo 4: O selo, no Svelte**
+- [x] **Passo 4: O selo, no Svelte**
 
 `ConversationList.svelte` desenha `WhatsApp · QR` quando o tipo for de sessão. `npm test` verde.
 
-- [ ] **Passo 5: A suíte inteira do inbox verde. Commit.**
+- [x] **Passo 5: A suíte inteira do inbox verde. Commit.**
 
 ---
 
@@ -266,14 +266,14 @@ O terceiro é o guarda: a janela de 24h é regra do WABA e **precisa continuar v
 
 **`ConversationManager::record()` apaga a marca de telefone nao resolvido.** Ele canoniza todo destinatario de whatsapp tirando o que nao e digito. Num identificador opaco sobram digitos que **parecem telefone** — exatamente o destinatario inventado que o desenho proibe. O plugin hoje devolve o prefixo logo depois de `record()`, o que funciona e depende de rodar na linha seguinte para sempre.
 
-- [ ] Teste: um destinatario marcado atravessa `record()` intacto.
-- [ ] `record()` nao canoniza destinatario ja marcado.
-- [ ] Remover o contorno do plugin, e o teste dele passa a ser o do Meta bundle.
+- [x] Teste: um destinatario marcado atravessa `record()` intacto.
+- [x] `record()` nao canoniza destinatario ja marcado.
+- [x] Remover o contorno do plugin, e o teste dele passa a ser o do Meta bundle.
 
 **`ContactMatcher::match()` so casa por telefone quando o asset e `WhatsAppPhoneNumber`.** Asset de QR nunca casa contato, exceto por `contact_match_field`. Sem contato, a conversa aparece na caixa **sem contato ligado** — sem historico, sem campos, sem campanha — e `campaigns->dispatch()` devolve falso sempre.
 
-- [ ] Decidir se o casamento por telefone vale para asset de QR. **Provavelmente sim**: o telefone e o mesmo numero de cliente, venha por qual canal vier.
-- [ ] Teste antes de mexer: o casamento dos canais oficiais nao muda.
+- [x] Decidir se o casamento por telefone vale para asset de QR. **Provavelmente sim**: o telefone e o mesmo numero de cliente, venha por qual canal vier.
+- [x] Teste antes de mexer: o casamento dos canais oficiais nao muda.
 
 ---
 
@@ -281,16 +281,16 @@ O terceiro é o guarda: a janela de 24h é regra do WABA e **precisa continuar v
 
 **Desenho aprovado:** https://claude.ai/artifact/XKQWTWepYCAwqe38GA8tKi
 
-- [ ] **Passo 0: O `/health` precisa dizer o caso ruim, não só os bons.**
+- [x] **Passo 0: O `/health` precisa dizer o caso ruim, não só os bons.**
 
   *(Descoberto no plano 2.)* Se o mesmo número acabar com duas credenciais no store — um `DELETE` que falhou no meio, um backup restaurado —, `Open` **recusa** abrir a sessão e registra. É a decisão certa: escolher uma abriria a errada em metade das vezes, calada. Mas hoje isso só existe no log, e a tela de Conexões lê o `/health`.
 
   Sem expor esse estado, o atendente vê uma sessão que simplesmente não sobe, sem motivo escrito, e a saída — `DELETE` e parear de novo — não está em lugar nenhum da tela. **O `/health` ganha o estado, e a tela o mostra com o caminho de saída.** É mudança pequena dos dois lados, e sem ela o plano 2 entregou uma falha que ninguém consegue diagnosticar pela interface.
 
-- [ ] **Passo 1: Conexões** — número, situação, **quantas respostas estão na fila**, última mensagem. A coluna da fila não é decoração: é como alguém descobre que três clientes estão esperando.
-- [ ] **Passo 2: Parear** — um componente, três estados. O estado "não deu" distingue **expirou** de **o WhatsApp recusou**; só o primeiro oferece tentar de novo.
-- [ ] **Passo 3: Conferir em 390px de largura.** A tela de Conexões vai ser aberta do celular quando um número cair, que é justamente quando ninguém está na frente do computador.
-- [ ] **Passo 4: Commit.**
+- [x] **Passo 1: Conexões** — número, situação, **quantas respostas estão na fila**, última mensagem. A coluna da fila não é decoração: é como alguém descobre que três clientes estão esperando.
+- [x] **Passo 2: Parear** — um componente, três estados. O estado "não deu" distingue **expirou** de **o WhatsApp recusou**; só o primeiro oferece tentar de novo.
+- [x] **Passo 3: Conferir em 390px de largura.** A tela de Conexões vai ser aberta do celular quando um número cair, que é justamente quando ninguém está na frente do computador.
+- [x] **Passo 4: Commit.**
 
 ---
 
@@ -307,8 +307,8 @@ Os E2E do plano 2 provaram o serviço sozinho. Estes provam Mautic incluído.
   
   Anote o tempo real. Se o gotejar incomodar, a correção é no laço de despacho da `OutboundQueue` — deixar a conversa seguir no mesmo lote depois que o job anterior termina —, e aí vira tarefa do plano 1. **Medir primeiro**: com três respostas pode ser irrelevante; com quinze não é.
 - [ ] **E2E 5** — mandar uma **foto**. *Conferir:* aparece como mensagem não suportada com o texto explicando, e não some nem vira anexo quebrado.
-- [ ] **E2E 6 — o que protege quem pediu para sair.** Marcar um contato como opt-out e tentar responder por um número QR. *Conferir:* **recusado**. Este é o teste que prova que o `assertCanSend` não se perdeu no caminho — a regressão que a interface larga teria introduzido.
-- [ ] **Passo final: escrever o resultado de cada um**, com data e número usado.
+- [x] **E2E 6 — o que protege quem pediu para sair.** *(Provado em 19/09/2026, sem chip: a recusa acontece antes de o remetente escolher o transporte. Encontrou de quebra a janela de 24h do WABA sendo cobrada do canal por QR — corrigida no conector.)* Marcar um contato como opt-out e tentar responder por um número QR. *Conferir:* **recusado**. Este é o teste que prova que o `assertCanSend` não se perdeu no caminho — a regressão que a interface larga teria introduzido.
+- [x] **Passo final: escrever o resultado de cada um**, com data e número usado. — `docs/E2E.md`, 19/09/2026. Cinco dos seis esperam o chip; o E2E 6 esta provado.
 
 ---
 
