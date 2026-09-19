@@ -3,6 +3,9 @@
 declare(strict_types=1);
 
 use Mautic\CoreBundle\DependencyInjection\MauticCoreExtension;
+use MauticPlugin\MauticMetaBundle\Domain\AssetType;
+use MauticPlugin\MauticMetaBundle\Infrastructure\TransportResolver;
+use MauticPlugin\MauticWhatsQrBundle\Transport\QrTransport;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
 
 return function (ContainerConfigurator $configurator): void {
@@ -28,4 +31,14 @@ return function (ContainerConfigurator $configurator): void {
     // por Classe::metodo, e sem registro o roteador so descobre isso na requisicao.
     $services->load('MauticPlugin\\MauticWhatsQrBundle\\', '../')
         ->exclude('../{'.implode(',', $excludes).'}');
+
+    // A etiqueta e a unica coisa que liga a saida deste plugin ao Meta bundle: o
+    // TransportResolver de la recebe os transportes por esta tag, indexados pelo valor do
+    // AssetType, e escolhe o do asset. Sem a linha abaixo o QrTransport existiria como
+    // servico e nunca seria chamado — o primeiro envio por um numero de QR morreria no
+    // "No WhatsApp transport is registered for asset type", que e erro de configuracao
+    // aparecendo como falha de envio, com um cliente do outro lado esperando resposta.
+    // O tipo vem da enum, e nao da string: o dia em que o valor mudar la, isto acompanha.
+    $services->set(QrTransport::class)
+        ->tag(TransportResolver::TAG, ['asset_type' => AssetType::WhatsAppQrSession->value]);
 };
