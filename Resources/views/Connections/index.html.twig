@@ -1,0 +1,121 @@
+{#
+  A tela de Conexoes: os numeros por QR, a situacao, quantas respostas estao na fila e a
+  ultima mensagem.
+
+  Nada e decidido aqui. As linhas chegam prontas de ConnectionsOverview, que tem teste;
+  este arquivo escolhe palavras e cores. A regra e essa mesmo: tudo que precisa de teste
+  fica do lado de la, porque template nao se testa por unidade.
+#}
+{% extends '@MauticCore/Default/content.html.twig' %}
+{% block mauticContent %}meta{% endblock %}
+{% block headerTitle %}{{ 'mautic.whatsqr.connections'|trans }}{% endblock %}
+
+{% block content %}
+{{ includeStylesheet('plugins/MauticWhatsQrBundle/Assets/css/whatsqr.css?v=20260919-1') }}
+<div class="whatsqr">
+
+    <div class="whatsqr-head">
+        <div>
+            <h2>{{ 'mautic.whatsqr.connections'|trans }}</h2>
+            <p>{{ 'mautic.whatsqr.connections.lead'|trans }}</p>
+        </div>
+    </div>
+
+    <div class="whatsqr-box">
+        <div class="whatsqr-row whatsqr-row--head" aria-hidden="true">
+            <div>{{ 'mautic.whatsqr.column.number'|trans }}</div>
+            <div>{{ 'mautic.whatsqr.column.situation'|trans }}</div>
+            <div>{{ 'mautic.whatsqr.column.queued'|trans }}</div>
+            <div>{{ 'mautic.whatsqr.column.last_message'|trans }}</div>
+            <div></div>
+        </div>
+
+        {% for row in rows %}
+            {#
+              O tom da situacao. "Desconhecido" e neutro de proposito: ele nao e uma
+              queda, e pinta-lo de vermelho faria um numero recem-criado gritar por
+              socorro toda vez que alguem abrisse a tela.
+            #}
+            {% set tone = {
+                'connected': 'ok',
+                'pairing': 'wait',
+                'reconnecting': 'wait',
+                'logged_out': 'bad',
+                'failed': 'bad',
+                'ambiguous_credential': 'bad'
+            }[row.situation]|default('') %}
+
+            <div class="whatsqr-row {{ row.needsSomebody ? 'whatsqr-row--attention' : '' }}">
+                <div class="whatsqr-person">
+                    <span class="whatsqr-avatar" aria-hidden="true"><i class="ri-whatsapp-line"></i></span>
+                    <div>
+                        <div class="whatsqr-name">{{ row.name }}</div>
+                        <div class="whatsqr-number">{{ row.number|default('—') }}</div>
+                    </div>
+                </div>
+
+                <div class="whatsqr-cell">
+                    <div class="whatsqr-label">{{ 'mautic.whatsqr.column.situation'|trans }}</div>
+                    <span class="whatsqr-chip {{ tone ? 'whatsqr-chip--'~tone : '' }}"><i aria-hidden="true"></i>{{ ('mautic.whatsqr.state.'~row.situation)|trans }}</span>
+                </div>
+
+                <div class="whatsqr-cell {{ row.queued > 0 ? (row.needsSomebody ? 'whatsqr-cell--stuck' : 'whatsqr-cell--waiting') : '' }}">
+                    <div class="whatsqr-label">{{ 'mautic.whatsqr.column.queued'|trans }}</div>
+                    {% if row.queued > 0 %}
+                        {#
+                          O "+" quando a leitura bateu no teto. Um numero exato que nao e
+                          exato e pior do que nenhum: quem le "12 esperando" fecha a tela
+                          achando que sabe o tamanho do problema.
+                        #}
+                        {% set shown = row.queued ~ (row.queuedCapped ? '+' : '') %}
+                        {{ (row.queued == 1 and not row.queuedCapped ? 'mautic.whatsqr.queued.one' : 'mautic.whatsqr.queued.many')|trans({'%count%': shown}) }}
+                    {% else %}
+                        {{ (row.queuedCapped ? 'mautic.whatsqr.queued.unknown' : 'mautic.whatsqr.queued.none')|trans }}
+                    {% endif %}
+                </div>
+
+                <div class="whatsqr-cell">
+                    <div class="whatsqr-label">{{ 'mautic.whatsqr.column.last_message'|trans }}</div>
+                    {{ row.lastMessageAt ? row.lastMessageAt|date('d/m/Y H:i') : 'mautic.whatsqr.last_message.never'|trans }}
+                </div>
+
+                <div class="whatsqr-cell whatsqr-cell--actions">
+                    <a class="btn btn-default" href="{{ path('mautic_whatsqr_pair', {assetId: row.assetId}) }}">{{ 'mautic.whatsqr.action.pair'|trans }}</a>
+                </div>
+
+                {#
+                  O caminho de saida por escrito. Sem esta faixa o atendente ve uma sessao
+                  que simplesmente nao sobe, sem motivo, e a saida -- apagar e parear de
+                  novo -- nao esta em lugar nenhum da tela.
+                #}
+                {% if row.situation == 'ambiguous_credential' %}
+                    <div class="whatsqr-exit">
+                        <strong>{{ 'mautic.whatsqr.exit.ambiguous.title'|trans }}</strong>
+                        {{ 'mautic.whatsqr.exit.ambiguous.body'|trans }}
+                        {% if row.reason %}<div class="whatsqr-reason">{{ row.reason }}</div>{% endif %}
+                    </div>
+                {% elseif row.situation == 'logged_out' %}
+                    <div class="whatsqr-exit">
+                        <strong>{{ 'mautic.whatsqr.exit.logged_out.title'|trans }}</strong>
+                        {{ 'mautic.whatsqr.exit.logged_out.body'|trans({'%jid%': row.jid|default('—')}) }}
+                    </div>
+                {% endif %}
+            </div>
+        {% else %}
+            <div class="whatsqr-empty">{{ 'mautic.whatsqr.connections.empty'|trans }}</div>
+        {% endfor %}
+    </div>
+
+    <div class="whatsqr-notes">
+        <div class="whatsqr-note">
+            <strong>{{ 'mautic.whatsqr.note.scope.title'|trans }}</strong>
+            <p>{{ 'mautic.whatsqr.note.scope.body'|trans }}</p>
+        </div>
+        <div class="whatsqr-note">
+            <strong>{{ 'mautic.whatsqr.note.queue.title'|trans }}</strong>
+            <p>{{ 'mautic.whatsqr.note.queue.body'|trans }}</p>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

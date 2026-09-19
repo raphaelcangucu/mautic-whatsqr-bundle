@@ -1,0 +1,151 @@
+/*
+ * As duas telas deste plugin.
+ *
+ * A largura de referencia nao e o desktop: esta tela e aberta do celular quando um numero
+ * cai, que e justamente quando ninguem esta na frente do computador. Por isso a tabela
+ * nao rola de lado -- em tela estreita cada linha vira um cartao, com o rotulo de cada
+ * coluna por escrito. Tabela que rola de lado esconde justamente a coluna da direita, e a
+ * coluna da direita aqui e quantas respostas estao esperando.
+ */
+
+/* O Mautic ja poe border-box em tudo, mas as larguras de 100% daqui dependem disso para
+   nao estourar a linha -- e uma folha de estilo que so funciona por causa de uma regra de
+   outro arquivo e a que quebra no dia em que aquele arquivo muda. */
+.whatsqr, .whatsqr *, .whatsqr *::before, .whatsqr *::after { box-sizing: border-box; }
+
+.whatsqr { color: #303642; }
+.whatsqr-head { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+.whatsqr-head > div { flex: 1 1 260px; }
+.whatsqr-head h2 { margin: 0 0 3px; font-size: 21px; font-weight: 650; letter-spacing: -0.3px; }
+.whatsqr-head p { margin: 0; font-size: 12.5px; color: #858b96; }
+
+.whatsqr-box { background: #fff; border: 1px solid #e7e9ed; border-radius: 12px; overflow: hidden; }
+.whatsqr-empty { padding: 24px 20px; font-size: 13px; color: #858b96; }
+
+.whatsqr-row {
+    display: grid;
+    grid-template-columns: 2.1fr 1.3fr 1.2fr 1.4fr auto;
+    gap: 16px;
+    padding: 16px 20px;
+    align-items: center;
+    border-bottom: 1px solid #f0f2f5;
+}
+.whatsqr-row:last-child { border-bottom: 0; }
+.whatsqr-row--head {
+    padding: 13px 20px;
+    background: #fafbfc;
+    font-size: 11.5px;
+    font-weight: 650;
+    color: #7f8896;
+    letter-spacing: 0.2px;
+    text-transform: uppercase;
+}
+/* A linha que espera alguem se destaca sozinha: quem abre isto do celular precisa achar
+   o numero errado antes de ler qualquer palavra. */
+.whatsqr-row--attention { background: #fffaf3; }
+
+.whatsqr-person { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.whatsqr-avatar {
+    width: 34px; height: 34px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    background: #eef0f8; color: #4e5e9e; font-size: 17px;
+}
+.whatsqr-name { font-size: 13.5px; font-weight: 600; word-break: break-word; }
+.whatsqr-number { font-size: 12px; color: #858b96; }
+
+.whatsqr-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 600; border-radius: 20px; padding: 4px 11px;
+    background: #eef0f8; color: #4b5261;
+}
+.whatsqr-chip i { font-style: normal; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.whatsqr-chip--ok { background: #e7f4ec; color: #2f6f52; }
+.whatsqr-chip--wait { background: #fbeee0; color: #8a6a35; }
+.whatsqr-chip--bad { background: #faeae7; color: #a5483c; }
+
+.whatsqr-cell { font-size: 12.5px; color: #858b96; min-width: 0; }
+.whatsqr-cell--waiting { color: #8a6a35; font-weight: 600; }
+.whatsqr-cell--stuck { color: #a5483c; font-weight: 600; }
+.whatsqr-label { display: none; font-size: 11px; font-weight: 650; color: #9aa1ac; text-transform: uppercase; letter-spacing: 0.2px; }
+
+/* O caminho de saida por escrito. Sem ele o atendente ve uma sessao que nao sobe e nao
+   tem onde ler o que fazer -- e a saida de "duas credenciais" nao esta em lugar nenhum
+   da tela. */
+.whatsqr-exit {
+    grid-column: 1 / -1;
+    margin-top: 4px;
+    padding: 12px 14px;
+    background: #fdf7f6;
+    border: 1px solid #efd8d1;
+    border-radius: 9px;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: #8a4c40;
+}
+.whatsqr-exit code { background: #fff; border: 1px solid #efd8d1; border-radius: 5px; padding: 1px 5px; font-size: 12px; color: #8a4c40; }
+.whatsqr-exit strong { color: #6f3a30; }
+
+.whatsqr-notes { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 16px; }
+.whatsqr-note { flex: 1 1 260px; padding: 15px 18px; background: #fff; border: 1px solid #e7e9ed; border-radius: 11px; }
+.whatsqr-note strong { display: block; font-size: 12px; font-weight: 650; color: #7f8896; text-transform: uppercase; margin-bottom: 7px; }
+.whatsqr-note p { margin: 0; font-size: 12.5px; color: #858b96; line-height: 1.65; }
+
+/* ------------------------------------------------------------------ */
+/* Parear: um cartao, tres estados. O que muda e o miolo.               */
+/* ------------------------------------------------------------------ */
+
+.whatsqr-card {
+    max-width: 420px;
+    margin: 0 auto;
+    background: #fff;
+    border: 1px solid #e7e9ed;
+    border-radius: 12px;
+    padding: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+.whatsqr-card--ok { border-color: #dbeadf; }
+.whatsqr-card--bad { border-color: #efd8d1; }
+.whatsqr-stage { align-self: flex-start; font-size: 11px; font-weight: 700; border-radius: 5px; padding: 3px 8px; background: #eef0f8; color: #4e5e9e; }
+.whatsqr-card--ok .whatsqr-stage { background: #e7f4ec; color: #2f6f52; }
+.whatsqr-card--bad .whatsqr-stage { background: #faeae7; color: #a5483c; }
+
+.whatsqr-figure {
+    width: 100%;
+    max-width: 240px;
+    aspect-ratio: 1;
+    margin: 0 auto;
+    border-radius: 12px;
+    background: #fbfcfd;
+    border: 1px solid #e7e9ed;
+    display: flex; align-items: center; justify-content: center;
+    padding: 12px;
+}
+.whatsqr-figure img, .whatsqr-figure svg { width: 100%; height: 100%; object-fit: contain; }
+.whatsqr-figure i { font-size: 64px; font-style: normal; }
+.whatsqr-card--ok .whatsqr-figure { background: #f7fbf8; border-color: #dbeadf; color: #34a06a; }
+.whatsqr-card--bad .whatsqr-figure { background: #fdf7f6; border-color: #efd8d1; color: #c9604f; }
+
+.whatsqr-cardtext { text-align: center; }
+.whatsqr-cardtext strong { display: block; font-size: 13.5px; font-weight: 600; margin-bottom: 4px; word-break: break-word; }
+.whatsqr-cardtext p { margin: 0; font-size: 12px; color: #858b96; line-height: 1.6; }
+
+.whatsqr-aside { padding: 12px 14px; background: #fbfcfd; border: 1px solid #e7e9ed; border-radius: 9px; font-size: 12px; color: #858b96; line-height: 1.6; }
+.whatsqr-card--bad .whatsqr-aside { background: #fdf7f6; border-color: #efd8d1; color: #9c5b4e; }
+.whatsqr-reason { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; word-break: break-word; }
+
+.whatsqr-card .btn { width: 100%; }
+
+@media (max-width: 760px) {
+    .whatsqr-row { grid-template-columns: 1fr; gap: 10px; padding: 16px; }
+    .whatsqr-row--head { display: none; }
+    .whatsqr-row + .whatsqr-row { border-top: 1px solid #e7e9ed; }
+    /* O rotulo aparece so aqui: sem o cabecalho da tabela, "3" sozinho num cartao nao
+       diz tres do que. */
+    .whatsqr-label { display: block; margin-bottom: 2px; }
+    .whatsqr-cell--actions { justify-self: stretch; }
+    .whatsqr-cell--actions .btn { width: 100%; }
+    .whatsqr-head h2 { font-size: 19px; }
+    .whatsqr-card { padding: 18px; }
+}

@@ -1,0 +1,90 @@
+{#
+  Parear: um componente, tres estados. O que muda e o miolo do cartao, nao a tela.
+
+  Tres telas separadas obrigariam cada uma a repetir o cabecalho, o nome do numero e o
+  caminho de volta -- e a terceira copia e a que envelhece diferente das outras duas.
+
+  Quem escolhe o estado, a causa e se o botao aparece e PairingScreen, que tem teste. Este
+  arquivo nunca deduz nada a partir da causa: ele le `view.offersRetry` e pronto. Um
+  `{% if view.cause != 'refused' %}` aqui passaria a valer para toda causa nova sem
+  ninguem reparar, e a causa nova apareceria oferecendo um botao que nunca resolve.
+#}
+{% extends '@MauticCore/Default/content.html.twig' %}
+{% block mauticContent %}meta{% endblock %}
+{% block headerTitle %}{{ 'mautic.whatsqr.pair.title'|trans }}{% endblock %}
+
+{% block content %}
+{{ includeStylesheet('plugins/MauticWhatsQrBundle/Assets/css/whatsqr.css?v=20260919-1') }}
+<div class="whatsqr">
+
+    <div class="whatsqr-head">
+        <div>
+            <h2>{{ 'mautic.whatsqr.pair.title'|trans }}</h2>
+            <p>{{ asset.name }}{% if asset.phoneNumber %} · {{ asset.phoneNumber }}{% endif %}</p>
+        </div>
+        <a class="btn btn-default" href="{{ path('mautic_whatsqr_connections') }}">{{ 'mautic.whatsqr.action.back'|trans }}</a>
+    </div>
+
+    {% set stage = view.stage %}
+    <div class="whatsqr-card {{ stage == 'connected' ? 'whatsqr-card--ok' : (stage == 'not_done' ? 'whatsqr-card--bad' : '') }}">
+        <span class="whatsqr-stage">{{ ('mautic.whatsqr.pair.stage.'~stage)|trans }}</span>
+
+        {% if stage == 'waiting' %}
+            <div class="whatsqr-figure">
+                {#
+                  O codigo vai desenhado aqui dentro, e nao numa URL de imagem: um QR
+                  servido por endereco proprio e um QR que alguem abre sem sessao, e quem
+                  o abre pareia o numero.
+                #}
+                {% if qrSvg %}{{ qrSvg|raw }}{% else %}<div class="whatsqr-reason">{{ view.qr }}</div>{% endif %}
+            </div>
+            <div class="whatsqr-cardtext">
+                <strong>{{ 'mautic.whatsqr.pair.waiting.title'|trans }}</strong>
+                <p>{{ 'mautic.whatsqr.pair.waiting.body'|trans }}</p>
+            </div>
+            <div class="whatsqr-aside">{{ 'mautic.whatsqr.pair.waiting.note'|trans }}</div>
+
+        {% elseif stage == 'connected' %}
+            <div class="whatsqr-figure">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            </div>
+            <div class="whatsqr-cardtext">
+                <strong>{{ view.jid|default(jid)|default(asset.name) }}</strong>
+                <p>{{ 'mautic.whatsqr.pair.connected.body'|trans }}</p>
+            </div>
+            <div class="whatsqr-aside">{{ 'mautic.whatsqr.pair.connected.note'|trans }}</div>
+            <a class="btn btn-primary" href="{{ path('mautic_meta_conversations') }}">{{ 'mautic.whatsqr.action.inbox'|trans }}</a>
+
+        {% else %}
+            <div class="whatsqr-figure">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 16H3z M12 10v4 M12 17h.01" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            </div>
+            <div class="whatsqr-cardtext">
+                <strong>{{ ('mautic.whatsqr.pair.cause.'~(view.cause|default('refused'))~'.title')|trans }}</strong>
+                <p>{{ ('mautic.whatsqr.pair.cause.'~(view.cause|default('refused'))~'.body')|trans({'%jid%': jid|default('—')}) }}</p>
+            </div>
+            {% if view.reason %}
+                <div class="whatsqr-aside">
+                    {{ 'mautic.whatsqr.pair.reason'|trans }}
+                    <div class="whatsqr-reason">{{ view.reason }}</div>
+                </div>
+            {% endif %}
+
+            {#
+              O botao existe ou nao existe conforme a decisao ja tomada. Quando ele nao
+              existe, o que fica no lugar e o que fazer em seguida -- porque "nao deu"
+              sozinho nao resolve o problema de ninguem.
+            #}
+            {% if view.offersRetry %}
+                <form method="post" action="{{ path('mautic_whatsqr_pair_restart', {assetId: asset.id}) }}">
+                    <input type="hidden" name="_token" value="{{ csrf_token('whatsqr_pair_restart_'~asset.id) }}">
+                    <button class="btn btn-default">{{ 'mautic.whatsqr.action.new_code'|trans }}</button>
+                </form>
+            {% else %}
+                <div class="whatsqr-aside">{{ ('mautic.whatsqr.pair.cause.'~(view.cause|default('refused'))~'.exit')|trans }}</div>
+            {% endif %}
+        {% endif %}
+    </div>
+
+</div>
+{% endblock %}

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use MauticPlugin\MauticWhatsQrBundle\Controller\ConnectionsController;
 use MauticPlugin\MauticWhatsQrBundle\Controller\WebhookController;
 
 return [
@@ -18,6 +19,23 @@ return [
         'whatsqr_default_engine' => 'whatsmeow',
     ],
     'routes'      => [
+        'main' => [
+            'mautic_whatsqr_connections' => [
+                'path'       => '/whatsqr/connections',
+                'controller' => ConnectionsController::class.'::index',
+            ],
+            'mautic_whatsqr_pair' => [
+                'path'         => '/whatsqr/connections/{assetId}/pair',
+                'controller'   => ConnectionsController::class.'::pair',
+                'requirements' => ['assetId' => '\\d+'],
+            ],
+            'mautic_whatsqr_pair_restart' => [
+                'path'         => '/whatsqr/connections/{assetId}/pair/restart',
+                'controller'   => ConnectionsController::class.'::restart',
+                'method'       => 'POST',
+                'requirements' => ['assetId' => '\\d+'],
+            ],
+        ],
         // A rota e publica porque quem chama e o servico em Go, que nao tem sessao
         // no Mautic. Quem autentica e a assinatura conferida no controlador, nao o
         // firewall — ver "Seguranca do webhook" no desenho.
@@ -26,6 +44,18 @@ return [
                 'path'       => '/whatsqr/webhook',
                 'controller' => WebhookController::class.'::handle',
                 'method'     => 'POST',
+            ],
+        ],
+    ],
+    'menu'        => [
+        'main' => [
+            'mautic.whatsqr.menu' => [
+                // Prioridade logo abaixo da do Meta bundle: os numeros por QR sao lidos
+                // junto dos oficiais, e um item longe do outro faz o atendente procurar.
+                'route'     => 'mautic_whatsqr_connections',
+                'access'    => 'meta:connections:view',
+                'iconClass' => 'ri-qr-code-line',
+                'priority'  => 19,
             ],
         ],
     ],
