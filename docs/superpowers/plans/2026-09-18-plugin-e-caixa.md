@@ -181,6 +181,25 @@ public function testAJobOfAConnectedNumberIsLeftAlone(): void
 
 ---
 
+## Tarefa 7c: Gravar o estado da sessao — sem isso, tres tarefas sao inertes
+
+*(Descoberto na tarefa 7.)* O webhook reconhece o evento `session`, mas o ingestor devolve nulo para ele — a tarefa 5 adiou de proposito. Resultado: **nada grava `whatsqr_session_status`**, e tres coisas dependem dessa chave.
+
+| Quem le | O que deixa de funcionar |
+|---|---|
+| A varredura de expiracao (tarefa 7) | Nunca acha numero caido: e inerte em producao |
+| `ReplyAvailability` (tarefa 8) | O compositor nao sabe que o numero caiu |
+| A tela de Conexoes (tarefa 9) | Nao tem estado para mostrar |
+
+- [ ] **Passo 1: Testes** — cada estado que o servico emite grava a chave; estado desconhecido nao apaga o que estava la; evento de sessao de um numero nao mexe em outro.
+- [ ] **Passo 2:** O evento tambem precisa gravar o **JID pareado** no pareamento, que e o que barra a volta com outro chip do lado do Mautic.
+- [ ] **Passo 3:** `logged_out` e o caso que a tela precisa destacar — pede pareamento de novo, e a fila daquele numero nao vai sair sozinha.
+- [ ] **Passo 4: Commit.**
+
+**Atencao ao que NAO fazer:** o estado vai para `settings`, **nunca** para `status` do asset. O `ReplyAvailability` fecha o compositor quando o asset sai de `active`, e a queda precisa manter o compositor aberto — e o `retry` passa a devolver 409.
+
+---
+
 ## Tarefa 7b: O `maxAttempts`, e uma garantia que não pode ser atropelada
 
 > **Descoberto durante o plano 1.** A tarefa 5 de lá mediu: com `maxAttempts = 1`, o primeiro fracasso já bate o teto e o job vira `failed` **antes de qualquer reagendamento**. Ou seja, o backoff de duas horas que acabamos de construir é **inerte** até alguém subir esse número — e quem o define é a caixa, não a fila.
