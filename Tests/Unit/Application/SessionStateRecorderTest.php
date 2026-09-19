@@ -83,6 +83,13 @@ final class SessionStateRecorderTest extends TestCase
         // noticia de que o numero voltou.
         $ingestor->ingest($asset, $this->sessionEvent(''));
         self::assertSame('quarantined', $asset->getSettings()[SessionState::SETTING_STATUS] ?? null);
+
+        // E a palavra sem forma de estado tambem nao apaga -- este e o caso que a
+        // implementacao recusa e nada afirmava. Apagar aqui seria o pior dos dois mundos:
+        // a varredura pula asset sem chave, entao um corpo malformado desligaria em
+        // silencio a rede de seguranca do numero.
+        $ingestor->ingest($asset, $this->sessionEvent(str_repeat('x', 10000)));
+        self::assertSame('quarantined', $asset->getSettings()[SessionState::SETTING_STATUS] ?? null);
     }
 
     /**
