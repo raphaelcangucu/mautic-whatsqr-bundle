@@ -154,6 +154,11 @@ type bench struct {
 	clock   *clock
 	notices *collector
 	clients map[string]*fakeClient
+	// dialErr e a recusa que a fabrica de clientes devolve para aquele id.
+	// Existe porque ha recusa que acontece ANTES de haver cliente -- a
+	// credencial duplicada e a unica hoje --, e um teste que so sabe
+	// devolver cliente nao consegue chegar nela.
+	dialErr map[string]error
 }
 
 func newBench(t *testing.T, clients map[string]*fakeClient) *bench {
@@ -162,8 +167,12 @@ func newBench(t *testing.T, clients map[string]*fakeClient) *bench {
 		clock:   &clock{t: t0},
 		notices: &collector{},
 		clients: clients,
+		dialErr: map[string]error{},
 	}
 	b.m = NewManager(func(id string) (Client, error) {
+		if err, refused := b.dialErr[id]; refused {
+			return nil, err
+		}
 		c, ok := clients[id]
 		if !ok {
 			return nil, fmt.Errorf("nao ha cliente de mentira para %q", id)
@@ -502,5 +511,81 @@ func TestStatusShowsEverySession(t *testing.T) {
 	}
 	if len(states) != 2 || states["a"] != Connected || states["b"] != Pairing {
 		t.Fatalf("status = %v, esperado a conectada e b pareando", states)
+	}
+}
+
+// O numero com duas credenciais no disco: a sessao nao abre, e sem estas
+// linhas ele desaparece do /health -- a tela mostra quatro numeros onde ha
+// cinco e nao explica o quinto.
+func TestARefusedAmbiguousCredentialStillShowsUpInStatus(t *testing.T) {
+	b := newBench(t, map[string]*fakeClient{"a": newFakeClient("a", "qr-da-a")})
+	// O mesmo embrulho que o dialer do main poe em volta da recusa do
+	// store: o teste tem que atravessar o embrulho, senao ele prova apenas
+	// que errors.Is funciona com o erro pelado.
+	b.dialErr["b"] = fmt.Errorf("a sessao b pareou com %s e essa credencial nao esta disponivel (%w)", jidPaired, ErrAmbiguousJID)
+	b.paired(t, "a", jidPaired)
+
+	if _, err := b.m.Open(context.Background(), "b"); !errors.Is(err, ErrAmbiguousJID) {
+		t.Fatalf("erro = %v, esperava errors.Is(err, ErrAmbiguousJID)", err)
+	}
+
+	byID := map[string]Snapshot{}
+	for _, snap := range b.m.Status() {
+		byID[snap.ID] = snap
+	}
+	if len(byID) != 2 {
+		t.Fatalf("status trouxe %d linhas, esperava a de pe e a recusada: %v", len(byID), byID)
+	}
+	if byID["a"].State != Connected {
+		t.Errorf("a sessao de pe virou %q", byID["a"].State)
+	}
+	refused := byID["b"]
+	if refused.State != AmbiguousCredential {
+		t.Fatalf("b: estado = %q, esperado %q", refused.State, AmbiguousCredential)
+	}
+	// O motivo por escrito e metade do ponto: "nao abriu" sem o que houve
+	// deixa o atendente com a mesma tela muda de antes.
+	if !strings.Contains(refused.Reason, jidPaired) {
+		t.Errorf("b: motivo = %q, esperava o chip la dentro", refused.Reason)
+	}
+}
+
+// Uma abertura que falhou por outra razao nao vira linha de tela: ela passa
+// sozinha na tentativa seguinte, e uma linha vermelha que o atendente nao
+// tem como limpar e ruido onde a tela precisa ser lida depressa.
+func TestAnOrdinaryOpenFailureIsNotRemembered(t *testing.T) {
+	b := newBench(t, map[string]*fakeClient{})
+	b.dialErr["b"] = errors.New("o whatsapp nao respondeu")
+
+	if _, err := b.m.Open(context.Background(), "b"); err == nil {
+		t.Fatal("a abertura devia ter falhado")
+	}
+	if snaps := b.m.Status(); len(snaps) != 0 {
+		t.Fatalf("status = %v, esperava vazio", snaps)
+	}
+}
+
+// A saida escrita na tela e apagar a sessao. Ela tem que funcionar sobre uma
+// sessao que nunca existiu, e apagar a linha da recusa junto.
+func TestClosingARefusedSessionIsTheWayOut(t *testing.T) {
+	b := newBench(t, map[string]*fakeClient{"b": newFakeClient("b", "qr-da-b")})
+	b.dialErr["b"] = fmt.Errorf("duas credenciais: %w", ErrAmbiguousJID)
+	if _, err := b.m.Open(context.Background(), "b"); !errors.Is(err, ErrAmbiguousJID) {
+		t.Fatalf("erro = %v, esperava a recusa", err)
+	}
+
+	// Nao pode ser ErrUnknownSession: a rota de apagar traduz isso em 404,
+	// e 404 e a unica saida escrita respondendo que nao ha o que apagar.
+	assertOK(t, b.m.Close("b"), "Close da recusada")
+	if snaps := b.m.Status(); len(snaps) != 0 {
+		t.Fatalf("status = %v, esperava a linha da recusa ter sumido", snaps)
+	}
+	// Apagada a credencial de sobra, a mesma sessao abre -- e nao sobra
+	// nenhuma linha antiga contando a historia velha.
+	delete(b.dialErr, "b")
+	b.open(t, "b")
+	snaps := b.m.Status()
+	if len(snaps) != 1 || snaps[0].State != Pairing {
+		t.Fatalf("status = %v, esperava so a sessao nova pareando", snaps)
 	}
 }

@@ -149,4 +149,52 @@ final class WhatsMeowDriverTest extends TestCase
             }
         }
     }
+
+    /**
+     * O `/health` numa pergunta so, e a sexta palavra dentro dele.
+     *
+     * `ambiguous_credential` nao descreve uma sessao: descreve um numero cuja sessao o
+     * servico se RECUSA a abrir, porque ha duas credenciais no disco para ele. Sem esta
+     * traducao o numero chega a tela sem situacao nenhuma e o atendente ve uma sessao que
+     * simplesmente nao sobe, sem motivo escrito.
+     */
+    public function testServiceSessionsBringsTheWholeHealthInOneQuestion(): void
+    {
+        $http = new MockHttpClient(function (string $method, string $url): MockResponse {
+            self::assertSame('GET', $method);
+            self::assertSame('http://127.0.0.1:8088/health', $url);
+
+            return $this->json(['sessions' => [
+                ['id' => 'sess-a1b2c3', 'status' => 'connected', 'jid' => '5531999990000@s.whatsapp.net'],
+                ['id' => 'sess-d4e5f6', 'status' => 'ambiguous_credential', 'reason' => 'session: mais de uma credencial para o mesmo numero: 5531988880000@s.whatsapp.net tem 2 credenciais no disco'],
+            ]], 200);
+        });
+
+        $states = $this->driver($http)->serviceSessions();
+
+        self::assertCount(2, $states);
+        self::assertSame(SessionState::CONNECTED, $states['sess-a1b2c3']->status);
+        self::assertSame(SessionState::AMBIGUOUS_CREDENTIAL, $states['sess-d4e5f6']->status);
+        self::assertStringContainsString('2 credenciais', (string) $states['sess-d4e5f6']->reason);
+    }
+
+    /**
+     * Uma palavra que este plugin nao conhece e um servico mais novo que ele. Aqui ela
+     * nao pode derrubar a resposta inteira: a situacao de cada numero na tela vem do
+     * estado gravado, e estourar faria o numero que fala a palavra nova apagar a linha de
+     * todos os outros -- numa tela que existe justamente para ser lida quando algo esta
+     * errado.
+     */
+    public function testAWordThisPluginDoesNotKnowDropsOnlyItsOwnLine(): void
+    {
+        $http = new MockHttpClient(fn (): MockResponse => $this->json(['sessions' => [
+            ['id' => 'sess-a1b2c3', 'status' => 'connected'],
+            ['id' => 'sess-novo', 'status' => 'banido_pela_meta'],
+        ]], 200));
+
+        $states = $this->driver($http)->serviceSessions();
+
+        self::assertArrayHasKey('sess-a1b2c3', $states);
+        self::assertArrayNotHasKey('sess-novo', $states);
+    }
 }

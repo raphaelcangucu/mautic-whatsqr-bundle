@@ -31,6 +31,23 @@ var (
 	ErrNotReady = errors.New("session: cliente conectou sem qr e sem jid")
 )
 
+// AmbiguousCredential e o numero cuja sessao o servico se recusa a abrir
+// porque ha mais de uma credencial para ele no disco -- um DELETE que
+// falhou no meio, um backup restaurado por cima (ver ErrAmbiguousJID, em
+// whatsmeow.go).
+//
+// Nao e um estado da maquina do state.go: nenhuma transicao leva a ele,
+// nenhuma sai dele, e nao ha Session nenhuma por tras. E justamente por nao
+// haver que ele precisa existir. Sem esta palavra o numero simplesmente
+// some do /health -- a sessao nunca entrou no mapa --, e a tela do
+// atendente mostra quatro numeros onde ha cinco, sem uma linha dizendo o
+// que houve com o quinto nem qual e a saida.
+//
+// Viaja como State, e nao como um campo a parte, porque quem le do outro
+// lado le uma palavra por numero: um segundo campo que so esta tela
+// consultaria seria uma segunda verdade para a mesma pergunta.
+const AmbiguousCredential State = "ambiguous_credential"
+
 // Snapshot e uma sessao vista de fora, num instante. Copia, e nao ponteiro:
 // quem le nao pode alcancar a maquina de estados, que pertence a uma
 // goroutine so.
@@ -100,7 +117,19 @@ type Manager struct {
 	mu       sync.RWMutex
 	sessions map[string]*live
 	opening  map[string]struct{}
-	closed   bool
+	// refused guarda as aberturas recusadas por credencial duplicada, por
+	// id, com o motivo por escrito.
+	//
+	// So esta recusa fica gravada, e nao toda falha de abertura, porque so
+	// ela tem as duas propriedades que justificam virar linha de tela: nao
+	// passa sozinha -- nenhuma retentativa apaga do disco a segunda
+	// credencial -- e tem saida escrita, que e apagar a sessao e parear de
+	// novo. Um WhatsApp que nao respondeu, guardado do mesmo jeito, viraria
+	// uma linha vermelha permanente que o atendente nao tem como limpar e
+	// que some sozinha na proxima tentativa: ruido exatamente onde esta
+	// tela precisa ser lida depressa.
+	refused map[string]string
+	closed  bool
 }
 
 // live e uma sessao aberta, com a goroutine que a possui.
@@ -148,6 +177,7 @@ func NewManager(dial func(id string) (Client, error), opts Options) *Manager {
 		opts:     opts,
 		sessions: map[string]*live{},
 		opening:  map[string]struct{}{},
+		refused:  map[string]string{},
 	}
 }
 
@@ -166,6 +196,7 @@ func (m *Manager) Open(ctx context.Context, id string) (Snapshot, error) {
 
 	client, err := m.dial(id)
 	if err != nil {
+		m.rememberRefusal(id, err)
 		return Snapshot{}, err
 	}
 	events, err := client.Connect(ctx)
@@ -215,10 +246,28 @@ func (m *Manager) Open(ctx context.Context, id string) (Snapshot, error) {
 		return Snapshot{}, ErrSessionClosed
 	}
 	m.sessions[id] = lv
+	// Abriu: o que impedia a abertura antes deixou de valer, e a linha da
+	// recusa nao pode sobreviver ao proprio motivo.
+	delete(m.refused, id)
 	m.mu.Unlock()
 
 	go m.run(lv, events)
 	return snap, nil
+}
+
+// rememberRefusal guarda a recusa que a tela precisa mostrar.
+//
+// Filtra por ErrAmbiguousJID e nao pelo erro ser nao-nil: ver o comentario
+// do campo `refused`. O motivo entra como texto, e nao como erro, porque e
+// texto que sai no /health -- guardar o erro pediria a quem le do outro
+// lado uma traducao que ninguem ia manter.
+func (m *Manager) rememberRefusal(id string, err error) {
+	if !errors.Is(err, ErrAmbiguousJID) {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.refused[id] = err.Error()
 }
 
 // reserve marca o id como em abertura e solta o lock. Connect fala com o
@@ -269,16 +318,27 @@ func (m *Manager) Snapshot(id string) (Snapshot, error) {
 	return m.snapshotOf(lv)
 }
 
-// Status e o retrato de todas, para o /health.
+// Status e o retrato de todas, para o /health -- inclusive das que nao
+// existem por terem sido recusadas na abertura.
 func (m *Manager) Status() []Snapshot {
 	m.mu.RLock()
 	alive := make([]*live, 0, len(m.sessions))
 	for _, lv := range m.sessions {
 		alive = append(alive, lv)
 	}
+	refused := make([]Snapshot, 0, len(m.refused))
+	for id, reason := range m.refused {
+		if _, open := m.sessions[id]; open {
+			// Nao deveria acontecer -- abrir apaga a recusa --, mas se as
+			// duas coisas existirem ao mesmo tempo quem vale e a sessao de
+			// pe: ela e a que atende cliente agora.
+			continue
+		}
+		refused = append(refused, Snapshot{ID: id, State: AmbiguousCredential, Reason: reason})
+	}
 	m.mu.RUnlock()
 
-	snaps := make([]Snapshot, 0, len(alive))
+	snaps := make([]Snapshot, 0, len(alive)+len(refused))
 	for _, lv := range alive {
 		// Uma sessao que fechou entre o mapa e o retrato simplesmente nao
 		// aparece: /health responde o que existe agora, e nao um erro por
@@ -287,7 +347,7 @@ func (m *Manager) Status() []Snapshot {
 			snaps = append(snaps, snap)
 		}
 	}
-	return snaps
+	return append(snaps, refused...)
 }
 
 // Send confere o estado dentro da goroutine dona e envia fora dela.
@@ -323,8 +383,19 @@ func (m *Manager) Close(id string) error {
 	m.mu.Lock()
 	lv, ok := m.sessions[id]
 	delete(m.sessions, id)
+	_, wasRefused := m.refused[id]
+	delete(m.refused, id)
 	m.mu.Unlock()
 	if !ok {
+		if wasRefused {
+			// A tela manda o atendente apagar a sessao para sair da
+			// credencial duplicada. Devolver "nao existe" aqui seria o
+			// gerente negar um numero que ele mesmo esta anunciando no
+			// /health -- e, quando o de-para tambem nao tiver o chip, e o
+			// que a rota traduz em 404: a unica saida escrita respondendo
+			// que nao ha o que apagar.
+			return nil
+		}
 		return ErrUnknownSession
 	}
 	lv.shutdown()

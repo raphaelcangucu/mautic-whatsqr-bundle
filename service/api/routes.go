@@ -360,9 +360,17 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 type healthSession struct {
-	ID     string `json:"id"`
+	ID string `json:"id"`
+	// Status e uma das cinco palavras da maquina de estados, mais
+	// session.AmbiguousCredential -- o numero que tem duas credenciais no
+	// disco e cuja sessao o servico se recusa a abrir. Essa sexta nao sai
+	// de sessao nenhuma, e e por isso que ela existe: sem ela o numero some
+	// da lista e a tela nao tem o que dizer sobre ele.
 	Status string `json:"status"`
 	JID    string `json:"jid,omitempty"`
+	// Reason e o motivo por escrito. Em Failed vem da maquina de estados;
+	// na credencial duplicada vem da propria recusa da abertura, e e o
+	// unico lugar onde os aparelhos que brigam pelo numero aparecem.
 	Reason string `json:"reason,omitempty"`
 	// LastRefusal e a ultima transicao que a maquina de estados recusou.
 	// Aparece aqui porque um evento recusado nao tem a quem devolver erro,

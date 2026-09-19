@@ -172,6 +172,10 @@ type harness struct {
 
 	mu      sync.Mutex
 	clients map[string]*fakeClient
+	// dialErr e a recusa que a fabrica devolve para aquele id. Ha recusa
+	// que acontece antes de existir cliente -- a credencial duplicada --, e
+	// sem isto nenhum teste de rota consegue chegar nela.
+	dialErr map[string]error
 }
 
 func newHarness(t *testing.T) *harness {
@@ -181,6 +185,7 @@ func newHarness(t *testing.T) *harness {
 		creds:   &fakeCredentials{},
 		dir:     newFakeDirectory(),
 		clients: map[string]*fakeClient{},
+		dialErr: map[string]error{},
 	}
 	h.manager = session.NewManager(h.dial, session.Options{})
 	t.Cleanup(h.manager.Shutdown)
@@ -198,6 +203,9 @@ func newHarness(t *testing.T) *harness {
 func (h *harness) dial(id string) (session.Client, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if err, refused := h.dialErr[id]; refused {
+		return nil, err
+	}
 	if c, ok := h.clients[id]; ok {
 		return c, nil
 	}
@@ -749,5 +757,81 @@ func TestAServerWithoutATokenRefusesEverything(t *testing.T) {
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s sem token configurado: %d, queria 401", method, path, rec.Code)
 		}
+	}
+}
+
+// O caso ruim que o /health nao contava: duas credenciais para o mesmo
+// numero no disco. A sessao nao abre, entao ela nao esta no gerente -- e sem
+// esta linha o numero some da tela sem motivo escrito e sem saida.
+func TestHealthNamesTheNumberWithTwoCredentials(t *testing.T) {
+	h := newHarness(t)
+	h.openPaired("numero-1")
+	// O embrulho e o mesmo que o dialer do main poe em volta da recusa do
+	// store, inclusive a saida por escrito.
+	h.dialErr["numero-2"] = fmt.Errorf(
+		"a sessao numero-2 pareou com %s e essa credencial nao esta disponivel (%w: 2 credenciais no disco); apague a sessao (DELETE /sessions/numero-2) antes de parear outro chip",
+		testJID, session.ErrAmbiguousJID)
+	h.dir.bind("numero-2", testJID)
+
+	if rec := h.do(http.MethodPost, "/sessions", `{"id":"numero-2"}`); rec.Code != http.StatusBadGateway {
+		t.Fatalf("abertura recusada devolveu %d, esperava 502", rec.Code)
+	}
+
+	rec := h.do(http.MethodGet, "/health", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health: %d %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Sessions []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Reason string `json:"reason"`
+		} `json:"sessions"`
+	}
+	decode(t, rec, &got)
+	if len(got.Sessions) != 2 {
+		t.Fatalf("health trouxe %d sessoes, esperava a de pe e a recusada: %+v", len(got.Sessions), got.Sessions)
+	}
+	if got.Sessions[0].ID != "numero-1" || got.Sessions[1].ID != "numero-2" {
+		t.Fatalf("health fora de ordem: %+v", got.Sessions)
+	}
+	refused := got.Sessions[1]
+	if refused.Status != string(session.AmbiguousCredential) {
+		t.Fatalf("numero-2: status = %q, esperado %q", refused.Status, session.AmbiguousCredential)
+	}
+	if !strings.Contains(refused.Reason, testJID) {
+		t.Errorf("numero-2: motivo = %q, esperava o chip la dentro", refused.Reason)
+	}
+}
+
+// A saida que a tela escreve tem que existir de verdade: apagar a sessao
+// recusada apaga as credenciais e limpa a linha do /health.
+func TestDeletingTheRefusedSessionClearsTheDiskAndTheScreen(t *testing.T) {
+	h := newHarness(t)
+	h.dialErr["numero-2"] = fmt.Errorf("duas credenciais: %w", session.ErrAmbiguousJID)
+	h.dir.bind("numero-2", testJID)
+	if rec := h.do(http.MethodPost, "/sessions", `{"id":"numero-2"}`); rec.Code != http.StatusBadGateway {
+		t.Fatalf("abertura recusada devolveu %d, esperava 502", rec.Code)
+	}
+
+	// 404 aqui seria a unica saida escrita respondendo que nao ha o que
+	// apagar, enquanto as duas credenciais continuam no disco.
+	if rec := h.do(http.MethodDelete, "/sessions/numero-2", ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("DELETE devolveu %d %s, esperava 204", rec.Code, rec.Body.String())
+	}
+	if forgot := h.creds.allForgotten(); len(forgot) != 1 || forgot[0] != testJID {
+		t.Errorf("credenciais apagadas = %v, esperava %q", forgot, testJID)
+	}
+	if h.dir.has("numero-2") {
+		t.Error("o de-para sobreviveu ao DELETE")
+	}
+
+	rec := h.do(http.MethodGet, "/health", "")
+	var got struct {
+		Sessions []healthSession `json:"sessions"`
+	}
+	decode(t, rec, &got)
+	if len(got.Sessions) != 0 {
+		t.Fatalf("health = %+v, esperava vazio depois do DELETE", got.Sessions)
 	}
 }

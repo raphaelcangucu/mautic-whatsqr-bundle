@@ -26,6 +26,35 @@ final readonly class SessionState
     private const KNOWN = [self::PAIRING, self::CONNECTED, self::RECONNECTING, self::LOGGED_OUT, self::FAILED];
 
     /**
+     * A sexta palavra: o numero que tem duas credenciais no disco do servico e cuja
+     * sessao o `Open` de la se RECUSA a abrir -- um DELETE que falhou no meio, um backup
+     * restaurado por cima. Escolher uma das duas abriria a errada em metade das vezes,
+     * calada, entao ele nao escolhe.
+     *
+     * Fica fora de KNOWN de proposito, e a razao e o caminho por onde ela chega. KNOWN e
+     * a lista do que vem pelo WEBHOOK -- e por isso que o gravador e a varredura
+     * consultam essa lista. Este estado nao vem por webhook e nao pode vir: nao ha sessao
+     * aberta, logo nao ha evento de sessao para o servico mandar. Ele so existe quando
+     * alguem PERGUNTA ao servico, que e o que a tela de Conexoes faz no `/health`.
+     * Junta-lo a KNOWN faria o gravador aceitar por webhook uma palavra que o servico
+     * nunca manda por ali, e a lista deixaria de dizer o que diz.
+     */
+    public const AMBIGUOUS_CREDENTIAL = 'ambiguous_credential';
+
+    /**
+     * Tudo que pode descrever um numero na tela: as cinco do webhook mais a do `/health`.
+     * E esta a lista que o construtor cobra, porque o objeto e o que a tela recebe.
+     */
+    private const REPORTABLE = [
+        self::PAIRING,
+        self::CONNECTED,
+        self::RECONNECTING,
+        self::LOGGED_OUT,
+        self::FAILED,
+        self::AMBIGUOUS_CREDENTIAL,
+    ];
+
+    /**
      * A chave de `settings` do asset onde mora o estado gravado do numero, com uma das
      * cinco palavras acima.
      *
@@ -60,9 +89,18 @@ final readonly class SessionState
         return self::KNOWN;
     }
 
+    /**
+     * Se esta palavra e uma das que chegam pelo webhook. Quem grava e quem varre a fila
+     * perguntam isto -- e nao `isReportable()` --, porque o que eles recebem e evento.
+     */
     public static function isKnown(string $status): bool
     {
         return in_array($status, self::KNOWN, true);
+    }
+
+    public static function isReportable(string $status): bool
+    {
+        return in_array($status, self::REPORTABLE, true);
     }
 
     public function __construct(
@@ -75,7 +113,7 @@ final readonly class SessionState
         if ('' === trim($sessionId)) {
             throw new \InvalidArgumentException('Um estado de sessao sem id nao diz de qual numero fala.');
         }
-        if (!self::isKnown($status)) {
+        if (!self::isReportable($status)) {
             // Guarda de ultimo recurso. Quem traduz o dialeto e o adaptador, e um estado
             // desconhecido chegando aqui significa que ele deixou passar -- melhor
             // estourar do que gravar em `settings` uma palavra que ninguem mais le.
@@ -91,5 +129,25 @@ final readonly class SessionState
     public function isConnected(): bool
     {
         return self::CONNECTED === $this->status;
+    }
+
+    /**
+     * Se este numero espera alguem, e nao tempo.
+     *
+     * Estatica e sobre a palavra, e nao sobre o objeto, porque quem mais precisa da
+     * resposta e a tela de Conexoes -- e la a situacao de um numero pode ser
+     * ConnectionRow::UNKNOWN, que nao cabe num SessionState. Uma segunda lista dentro da
+     * tela envelheceria separada desta, e a que envelhece calada e sempre a que deixa
+     * passar.
+     *
+     * A credencial duplicada nao passa sozinha: nenhuma retentativa apaga do disco a
+     * segunda credencial. `logged_out` tambem nao -- o WhatsApp desfez o pareamento e so
+     * um scan novo resolve. `failed` e terminal por definicao. `reconnecting` e o oposto
+     * disso e fica de fora: esperar e exatamente o certo a fazer ali, e uma tela que pede
+     * socorro a cada oscilacao de linha deixa de ser lida.
+     */
+    public static function needsSomebody(string $status): bool
+    {
+        return in_array($status, [self::AMBIGUOUS_CREDENTIAL, self::LOGGED_OUT, self::FAILED], true);
     }
 }

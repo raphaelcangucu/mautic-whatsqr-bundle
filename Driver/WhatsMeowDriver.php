@@ -81,6 +81,41 @@ final class WhatsMeowDriver implements SessionDriverInterface
     }
 
     /**
+     * @return array<string, SessionState>
+     */
+    public function serviceSessions(): array
+    {
+        $body = $this->request('GET', '/health');
+        $sessions = $body['sessions'] ?? [];
+        if (!is_array($sessions)) {
+            return [];
+        }
+
+        $states = [];
+        foreach ($sessions as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $id = trim((string) ($entry['id'] ?? ''));
+            if ('' === $id) {
+                continue;
+            }
+            try {
+                $states[$id] = $this->toSessionState($id, $entry);
+            } catch (\RuntimeException) {
+                // Uma palavra que este plugin nao conhece e um servico mais novo que ele,
+                // e aqui ela nao pode derrubar a resposta inteira: a situacao de cada
+                // numero na tela vem do estado gravado, nao daqui. Estourar faria o
+                // sexto numero, que fala a palavra nova, apagar a linha dos outros cinco
+                // -- e a tela existe justamente para ser lida quando algo esta errado.
+                continue;
+            }
+        }
+
+        return $states;
+    }
+
+    /**
      * O id da sessao e o externalId do asset. Uma sessao por QR nao tem numero no Graph
      * -- AssetType::isGraphAsset() ja diz isso --, entao o campo guarda o id nao
      * enumeravel pelo qual o servico, a configuracao e o webhook reconhecem este chip.
@@ -105,6 +140,9 @@ final class WhatsMeowDriver implements SessionDriverInterface
             'reconnecting' => SessionState::RECONNECTING,
             'logged_out'   => SessionState::LOGGED_OUT,
             'failed'       => SessionState::FAILED,
+            // So o `/health` manda esta: ela descreve um numero cuja sessao nao existe,
+            // e por isso nunca sai de POST /sessions nem de evento de sessao.
+            'ambiguous_credential' => SessionState::AMBIGUOUS_CREDENTIAL,
         ];
         if (!isset($known[$status])) {
             // Um motor que passou a falar outra palavra e um problema de contrato, nao do
