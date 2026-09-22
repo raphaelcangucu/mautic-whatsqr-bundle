@@ -43,8 +43,9 @@ if [ -z "$CODIGO" ]; then
 fi
 
 printf '%s' "$CODIGO" > "$SAIDA.txt"
+RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 php -r '
-require __DIR__."/../Infrastructure/QrEncoder.php";
+require $argv[3];
 $texto = file_get_contents($argv[1]);
 $m = MauticPlugin\MauticWhatsQrBundle\Infrastructure\QrEncoder::matrix($texto);
 $n = count($m); $e = 10; $marg = 4; $lado = ($n + 2*$marg) * $e;
@@ -54,7 +55,7 @@ $preto = imagecolorallocate($img, 0, 0, 0);
 for ($y = 0; $y < $n; $y++) for ($x = 0; $x < $n; $x++) if ($m[$y][$x])
     imagefilledrectangle($img, ($x+$marg)*$e, ($y+$marg)*$e, ($x+$marg+1)*$e-1, ($y+$marg+1)*$e-1, $preto);
 imagepng($img, $argv[2]);
-' "$SAIDA.txt" "$SAIDA"
+' "$SAIDA.txt" "$SAIDA" "$RAIZ/Infrastructure/QrEncoder.php"
 
 rm -f "$SAIDA.txt"
 echo "$SAIDA"

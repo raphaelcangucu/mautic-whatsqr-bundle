@@ -251,6 +251,11 @@ type whatsmeowClient struct {
 	stopped  chan struct{}
 	stopOnce sync.Once
 
+	// fecharJanela solta o contexto do pareamento. Guardado aqui, e nao
+	// esquecido num defer, porque a janela tem que sobreviver a funcao que a
+	// abriu -- e sem alguem para fecha-la sobraria uma goroutine por sessao.
+	fecharJanela context.CancelFunc
+
 	mu sync.Mutex
 	qr string
 	// jid e copia nossa, e nao uma leitura de cli.Store.ID a cada chamada:
@@ -295,8 +300,15 @@ func (c *whatsmeowClient) Connect(ctx context.Context) (<-chan Event, error) {
 		// GetQRChannel tem que vir antes de Connect: e ele que assina os
 		// eventos de pareamento.
 		var err error
-		qrChan, err = c.cli.GetQRChannel(ctx)
+		// O contexto do pareamento NAO pode ser o do pedido HTTP. Quem
+		// escaneia e uma pessoa, e ela chega depois de a resposta do POST ter
+		// sido escrita -- momento em que o contexto do pedido e cancelado e o
+		// emissor do whatsmeow para na mesma linha de log em que comecou.
+		janela, fecharJanela := qrContext(ctx, c.stopped)
+		c.fecharJanela = fecharJanela
+		qrChan, err = c.cli.GetQRChannel(janela)
 		if err != nil {
+			fecharJanela()
 			return nil, fmt.Errorf("session: canal de qr: %w", err)
 		}
 	}
@@ -452,7 +464,33 @@ func toJID(to string) (types.JID, error) {
 
 func (c *whatsmeowClient) Disconnect() {
 	c.stopOnce.Do(func() { close(c.stopped) })
+	if nil != c.fecharJanela {
+		c.fecharJanela()
+	}
 	c.cli.Disconnect()
+}
+
+// qrContext da ao pareamento um tempo de vida proprio: o do pedido que abriu a
+// sessao nao serve, e o de fundo sozinho vazaria.
+//
+// O emissor de codigos do whatsmeow observa o contexto que recebe. Recebendo o
+// do pedido HTTP, ele para no instante em que a resposta e escrita -- medido em
+// zero milissegundo entre "Emitting QR code" e "Context is done, stopping QR
+// emitter". O codigo entregue na resposta ja nascia morto, e de fora isso e
+// indistinguivel do WhatsApp recusando o numero.
+func qrContext(pedido context.Context, parada <-chan struct{}) (context.Context, context.CancelFunc) {
+	// WithoutCancel mantem os valores do pedido (log, rastreamento) e larga o
+	// cancelamento, que e justamente a parte que nao serve aqui.
+	janela, fechar := context.WithCancel(context.WithoutCancel(pedido))
+	go func() {
+		select {
+		case <-parada:
+			fechar()
+		case <-janela.Done():
+		}
+	}()
+
+	return janela, fechar
 }
 
 // mandar entrega o evento ao gerente sem nunca bloquear para sempre.

@@ -253,3 +253,41 @@ func esperar(t *testing.T, cond func() bool, msg string) {
 	}
 	t.Fatal(msg)
 }
+
+// The QR emitter watches the context it was handed. Hand it the HTTP request's
+// context and the emitter stops the instant the response is written -- measured
+// at zero milliseconds:
+//
+//	13:05:49.753 Emitting QR code https://wa.me/...
+//	13:05:49.753 Context is done, stopping QR emitter
+//
+// The code in the reply was already dead when the caller received it. Two
+// different phone numbers failed to pair against this, and it looked from the
+// outside exactly like WhatsApp refusing the number.
+func TestTheQrContextOutlivesTheRequestThatOpenedTheSession(t *testing.T) {
+	pedido, encerrarPedido := context.WithCancel(context.Background())
+	parada := make(chan struct{})
+
+	janela, fechar := qrContext(pedido, parada)
+	defer fechar()
+
+	// A resposta do POST foi escrita e o contexto do pedido morreu. A janela de
+	// pareamento nao tem nada com isso: quem escaneia e uma pessoa, e ela chega
+	// depois.
+	encerrarPedido()
+
+	select {
+	case <-janela.Done():
+		t.Fatal("a janela morreu junto com o pedido HTTP -- o codigo entregue ja nasce morto")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// E ela tem que morrer quando a sessao morre, senao fica uma goroutine e um
+	// websocket vivos para uma sessao que ninguem mais ve.
+	close(parada)
+	select {
+	case <-janela.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("a janela sobreviveu ao fim da sessao")
+	}
+}
