@@ -298,6 +298,7 @@ func TestEveryRouteRequiresTheToken(t *testing.T) {
 	want := map[string]bool{
 		"POST /sessions":               true,
 		"GET /sessions/{id}/qr":        true,
+		"GET /sessions/{id}/events":    true,
 		"DELETE /sessions/{id}":        true,
 		"POST /sessions/{id}/messages": true,
 		"GET /health":                  true,

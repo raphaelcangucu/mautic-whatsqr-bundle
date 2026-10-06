@@ -130,6 +130,10 @@ type Manager struct {
 	// tela precisa ser lida depressa.
 	refused map[string]string
 	closed  bool
+
+	latest       map[string]Snapshot
+	watchers     map[string]map[chan Snapshot]struct{}
+	watcherCount int
 }
 
 // live e uma sessao aberta, com a goroutine que a possui.
@@ -178,6 +182,8 @@ func NewManager(dial func(id string) (Client, error), opts Options) *Manager {
 		sessions: map[string]*live{},
 		opening:  map[string]struct{}{},
 		refused:  map[string]string{},
+		latest:   map[string]Snapshot{},
+		watchers: map[string]map[chan Snapshot]struct{}{},
 	}
 }
 
@@ -249,6 +255,7 @@ func (m *Manager) Open(ctx context.Context, id string) (Snapshot, error) {
 	// Abriu: o que impedia a abertura antes deixou de valer, e a linha da
 	// recusa nao pode sobreviver ao proprio motivo.
 	delete(m.refused, id)
+	m.publishLocked(snap)
 	m.mu.Unlock()
 
 	go m.run(lv, events)
@@ -268,6 +275,7 @@ func (m *Manager) rememberRefusal(id string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.refused[id] = err.Error()
+	m.publishLocked(Snapshot{ID: id, State: AmbiguousCredential, Reason: err.Error()})
 }
 
 // reserve marca o id como em abertura e solta o lock. Connect fala com o
@@ -385,6 +393,8 @@ func (m *Manager) Close(id string) error {
 	delete(m.sessions, id)
 	_, wasRefused := m.refused[id]
 	delete(m.refused, id)
+	m.publishLocked(Snapshot{ID: id})
+	delete(m.latest, id)
 	m.mu.Unlock()
 	if !ok {
 		if wasRefused {
@@ -406,6 +416,13 @@ func (m *Manager) Close(id string) error {
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
 	m.closed = true
+	for _, group := range m.watchers {
+		for ch := range group {
+			close(ch)
+		}
+	}
+	m.watchers = map[string]map[chan Snapshot]struct{}{}
+	m.watcherCount = 0
 	alive := make([]*live, 0, len(m.sessions))
 	for id, lv := range m.sessions {
 		alive = append(alive, lv)
@@ -485,6 +502,9 @@ func (m *Manager) run(lv *live, events <-chan Event) {
 // transicao vale em qual estado esta no state.go, e e la que continua.
 func (m *Manager) apply(lv *live, ev Event) {
 	switch ev.Kind {
+	case EventQRChanged:
+		m.publishLive(lv)
+		return
 	case EventMessage:
 		// O que chega nao mexe no estado da sessao; so sai pelo aviso.
 		m.notify(Notice{SessionID: lv.id, Kind: NoticeMessage, State: lv.state.State(), JID: lv.state.JID(), Message: ev.Message})
@@ -523,10 +543,13 @@ func (m *Manager) transition(lv *live, call func() error) {
 	// Olhar so o erro esconderia dos outros a sessao que acabou de morrer.
 	if lv.state.State() != before {
 		m.notifyState(lv)
+	} else {
+		m.publishLive(lv)
 	}
 }
 
 func (m *Manager) notifyState(lv *live) {
+	m.publishLive(lv)
 	m.notify(Notice{
 		SessionID: lv.id,
 		Kind:      NoticeSession,

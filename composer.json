@@ -6,7 +6,7 @@
     "require": {
         "php": ">=8.2",
         "mautic/core-lib": "^7.0",
-        "raphaelcangucu/mautic-meta-bundle": "^0.14"
+        "raphaelcangucu/mautic-meta-bundle": "^0.14.2"
     },
     "autoload": {
         "psr-4": {
@@ -20,5 +20,8 @@
         {
             "name": "Raphael Cangucu"
         }
-    ]
+    ],
+    "suggest": {
+        "raphaelcangucu/mautic-inbox-bundle": "^1.4.1 for human support through the omnichannel Inbox"
+    }
 }

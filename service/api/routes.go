@@ -113,6 +113,7 @@ func (s *Server) routes() []route {
 	return []route{
 		{"POST /sessions", s.openSession},
 		{"GET /sessions/{id}/qr", s.sessionQR},
+		{"GET /sessions/{id}/events", s.sessionEvents},
 		{"DELETE /sessions/{id}", s.closeSession},
 		{"POST /sessions/{id}/messages", s.sendMessage},
 		{"GET /health", s.health},

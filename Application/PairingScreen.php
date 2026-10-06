@@ -33,14 +33,9 @@ final class PairingScreen
         return match ($state->status) {
             SessionState::PAIRING => new PairingView(PairingView::WAITING, qr: $state->qr),
 
-            // Reconectando e "pareou e caiu da linha", nao "nao pareou". A pergunta que
-            // este cartao faz e "escaneou?", e a resposta ja e sim: mandar de volta para
-            // o QR pediria um scan que o WhatsApp vai recusar, porque o chip ja esta
-            // pareado. Se a linha nao voltar, quem conta isso e a tela de Conexoes.
-            SessionState::CONNECTED, SessionState::RECONNECTING => new PairingView(
-                PairingView::CONNECTED,
-                jid: $state->jid,
-            ),
+            SessionState::CONNECTED => new PairingView(PairingView::CONNECTED, jid: $state->jid),
+            // The account remains paired; never offer a credential reset on a drop.
+            SessionState::RECONNECTING => new PairingView(PairingView::RECONNECTING, jid: $state->jid),
 
             // O WhatsApp desfez o pareamento. Nada esta quebrado no numero: um scan novo
             // resolve, e por isso o botao aparece.

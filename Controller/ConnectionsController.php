@@ -20,6 +20,8 @@ use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+use Symfony\Component\Security\Csrf\CsrfTokenManagerInterface;
 
 /**
  * As duas telas deste plugin: a lista dos numeros e o cartao de parear um.
@@ -76,6 +78,59 @@ final class ConnectionsController extends CommonController
         ], headers: ['Cache-Control' => 'private, no-store, max-age=0', 'X-Content-Type-Options' => 'nosniff']);
     }
 
+    public function events(int $assetId, Request $request, CorePermissions $permissions, MetaAssetRepository $assets, SessionDriverFactory $drivers, PairingScreen $screen, CsrfTokenManagerInterface $tokens): StreamedResponse
+    {
+        if (!$permissions->isGranted('meta:connections:view')) { throw $this->createAccessDeniedException(); }
+        $asset = $this->qrAsset($assets, $assetId);
+        $driver = $drivers->forAsset($asset);
+        // Resolve access, lazy entities and CSRF before releasing the session lock.
+        $parameters = [
+            'asset' => $asset, 'canEdit' => $permissions->isGranted('meta:connections:edit'),
+            'jid' => trim((string) ($asset->getSettings()[SessionState::SETTING_JID] ?? '')) ?: null,
+            'startToken' => $tokens->getToken('whatsqr_pair_start_'.$assetId)->getValue(),
+            'restartToken' => $tokens->getToken('whatsqr_pair_restart_'.$assetId)->getValue(),
+        ];
+        if ($request->hasSession()) { $request->getSession()->save(); }
+        $previous = (string) $request->headers->get('Last-Event-ID', $request->query->get('version', ''));
+        return new StreamedResponse(function () use ($driver, $asset, $screen, $parameters, $previous): void {
+            $flush = static function (): bool {
+                if (ob_get_level() > 0) { @ob_flush(); }
+                flush();
+                return !connection_aborted();
+            };
+            $live = false;
+            $emit = function (PairingView $view) use ($parameters, &$previous, &$live, $flush): bool {
+                if (!$live) { echo "event: live\ndata: {}\n\n"; $live = true; }
+                $version = hash('sha256', json_encode($view, JSON_THROW_ON_ERROR));
+                if ($version === $previous) { return $flush(); }
+                $html = $this->renderView('@MauticWhatsQr/Connections/_pair_status.html.twig', $parameters + [
+                    'view' => $view, 'qrSvg' => $this->qrSvg($view),
+                ]);
+                if ($version !== $previous) {
+                    echo 'id: '.$version."\nevent: pairing\ndata: ".json_encode(['stage' => $view->stage, 'html' => $html], JSON_THROW_ON_ERROR)."\n\n";
+                    $previous = $version;
+                }
+                return $flush();
+            };
+            echo "retry: 5000\n\n";
+            if (!$flush()) { return; }
+            try {
+                $driver->watchSession($asset,
+                    static fn (?SessionState $state): bool => $emit(null === $state ? new PairingView(PairingView::READY) : $screen->view($state)),
+                    static function () use ($flush): bool { echo ": heartbeat\n\n"; return $flush(); },
+                );
+                echo "event: rotate\ndata: {}\n\n";
+            } catch (\Throwable) {
+                // Do not disclose private endpoints, tokens or raw transport errors.
+                echo "event: unavailable\ndata: {}\n\n";
+            }
+            $flush();
+        }, 200, [
+            'Content-Type' => 'text/event-stream', 'Cache-Control' => 'private, no-cache, no-store, max-age=0',
+            'X-Accel-Buffering' => 'no', 'X-Content-Type-Options' => 'nosniff',
+        ]);
+    }
+
     public function start(int $assetId, Request $request, CorePermissions $permissions, MetaAssetRepository $assets, SessionDriverFactory $drivers): RedirectResponse
     {
         if (!$permissions->isGranted('meta:connections:edit')
@@ -106,7 +161,7 @@ final class ConnectionsController extends CommonController
         } catch (\DomainException $failed) {
             $view = new PairingView(PairingView::NOT_DONE, cause: PairingView::CAUSE_REFUSED, reason: $failed->getMessage());
         }
-        return ['asset' => $asset, 'view' => $view, 'qrSvg' => $this->qrSvg($view),
+        return ['asset' => $asset, 'view' => $view, 'version' => hash('sha256', json_encode($view, JSON_THROW_ON_ERROR)), 'qrSvg' => $this->qrSvg($view),
             'canEdit' => $permissions->isGranted('meta:connections:edit'),
             'jid' => trim((string) ($asset->getSettings()[SessionState::SETTING_JID] ?? '')) ?: null];
     }

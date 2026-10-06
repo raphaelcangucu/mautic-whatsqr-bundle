@@ -18,6 +18,7 @@ final readonly class PairingView
     public const WAITING = 'waiting';
     /** Escaneou: o numero ja recebe. */
     public const CONNECTED = 'connected';
+    public const RECONNECTING = 'reconnecting';
     /** Nao deu. O que distingue os casos e $cause. */
     public const NOT_DONE = 'not_done';
 

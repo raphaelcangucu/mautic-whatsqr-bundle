@@ -1,4 +1,4 @@
-# Ponta a ponta — o que está provado e o que espera um chip
+# Validação ponta a ponta
 
 Canal de WhatsApp por QR Code (**não homologado**) para Mautic 7.
 
@@ -22,8 +22,8 @@ Não há evidência atual para atribuir a falha anterior à reativação do chip
 | Autenticação e sessão persistida | Confirmadas no servidor |
 | Estado e telefone no Mautic | Confirmados por consulta somente leitura |
 | Página mostra conectado e abre Inbox | Validada no navegador |
-| Mensagem real recebida no Inbox | Em validação |
-| Resposta real pelo Inbox | Ainda não validada |
+| Mensagem real recebida no Inbox | Confirmada na conversa de teste |
+| Resposta real pelo Inbox | Confirmada pelo destinatário às 03:24 UTC |
 | Reinício sem novo QR | Confirmado: restauração e autenticação às 03:07:15 UTC |
 | Queda prolongada e fila em ordem | Ainda não validadas nesta instalação |
 | Recibos de leitura | Não implementados no plugin |
@@ -36,7 +36,9 @@ Backups verificados ficam em `/home/forge/whatsqr-backups/20261006T024148Z` e
 `/home/forge/whatsqr-backups/20261006T025626Z`; incluem dump Mautic e cópia SQLite
 consistente. Contêm segredos e não devem ser publicados.
 
-## E2E 6 — provado sem WhatsApp nenhum, de propósito
+## Prova histórica de opt-out
+
+Este registro descreve uma validação anterior em banco descartável. Ela não foi executada novamente nesta publicação; os testes desta release usam mocks e não acessam o banco do Mautic.
 
 `MauticInboxBundle/Tests/Functional/QrChannelRespectsOptOutTest.php`, na release
 de provas contra o banco descartável. Roda sem sessão pareada porque a recusa
@@ -83,3 +85,35 @@ termina em banimento.
    minutos. Com três pode ser irrelevante; com quinze não é. **Medir antes de
    decidir se vale mexer.**
 3. Escrever aqui o resultado de cada um, com data e número usado.
+
+## SSE e resposta pelo Inbox — 6 de outubro de 2026
+
+- `EventSource` autenticado em `/s/whatsqr/connections/16/pair/events`: indicador
+  Live, cartão Connected e nenhum erro no console. Navegação para a lista e retorno
+  encerram/reabrem o fluxo automaticamente.
+- SSE interno: 401 sem bearer; 200 `text/event-stream` com autenticação, retrato
+  da sessão `suporte` conectada e nenhum QR após o pareamento.
+- Nginx sem buffering e pool PHP 8.4 separado, com 4 workers sob demanda; sessão
+  PHP liberada antes do stream. Não há consultas de estado ao banco em loop.
+- Backup consistente do SQLite pareado com verificação de integridade e hashes:
+  `/home/forge/whatsqr-backups/sse-20261006T032059Z`. Sem alterações de schema.
+- Checagens locais sem banco: 81 testes PHP / 371 assertions, 4 testes JavaScript,
+  testes Go da API/webhook com race detector e seleção de testes puros de sessão
+  (estado, concorrência, QR, assinatura e resolução do destinatário). Testes Go
+  do store/SQLite não foram executados.
+- A resposta do operador na conversa Inbox 269 falhava porque o conector normalizava
+  o número brasileiro para 9 dígitos, enquanto o WhatsApp usa o identificador antigo.
+  O serviço agora consulta o identificador canônico antes do envio e confirma a
+  variante com 8 dígitos se necessário. Não reescreve o cadastro do contato.
+- O job existente 75 foi retentado pela fila normal, com claim atômico e somente
+  para o destinatário autorizado. Resultado completed, log 365, com ID externo
+  retornado pelo WhatsApp. O Inbox mudou de Waiting to retry para Sent sem reload.
+  O recebimento foi confirmado pelo operador na própria conversa às 03:24 UTC
+  ("sim, recebi lega"). Uma segunda resposta às 03:25 UTC também passou para Sent.
+
+## Publicação 0.2.1 / Meta 0.14.2 / Inbox 1.4.1
+
+- WhatsQR: 81 testes PHP (371 asserções), 4 testes JavaScript e testes puros Go de API/webhook/sessão com race detector.
+- Meta: 63 testes com mocks e objetos em memória (266 asserções). Os 3 testes de repositório SQLite são bloqueados por padrão e exigem autorização explícita de um arquivo descartável, prova da conexão e backup antes do schema.
+- Inbox: 4 testes de disponibilidade QR (9 asserções), 80 testes JavaScript/TypeScript, formatação, Svelte check sem avisos e build dos bundles.
+- A publicação preserva o main mais recente de cada dependência. Não substitui a instalação de produção por um snapshot antigo e não executa migrações.

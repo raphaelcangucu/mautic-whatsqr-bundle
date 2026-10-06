@@ -53,8 +53,10 @@ final class PairingScreenTest extends TestCase
     {
         $view = $this->view(SessionState::RECONNECTING, jid: '5531999990000@s.whatsapp.net');
 
-        self::assertSame(PairingView::CONNECTED, $view->stage);
+        self::assertSame(PairingView::RECONNECTING, $view->stage);
         self::assertFalse($view->offersRetry);
+        self::assertNull($view->qr);
+        self::assertFalse((new PairingScreen())->canReset(new SessionState('sess-1', SessionState::RECONNECTING)));
     }
 
     /**

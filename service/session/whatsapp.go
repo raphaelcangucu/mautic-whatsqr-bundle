@@ -41,6 +41,8 @@ const (
 	// que ele viaja como texto e nao como codigo: quem distingue "expirou"
 	// de "recusado" e a borda, que viu o motivo de verdade.
 	EventFailed EventKind = "failed"
+	// A QR renewal changes only the pairing screen, never the webhook.
+	EventQRChanged EventKind = "qr_changed"
 )
 
 // Pareado e voltou sao dois eventos, e nao um so, de proposito. Quem sabe

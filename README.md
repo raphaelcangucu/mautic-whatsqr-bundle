@@ -4,12 +4,12 @@ Plugin de conexão de números WhatsApp por QR para o Inbox multicanal do Mautic
 O serviço Go mantém a sessão com Whatsmeow; o plugin autentica os webhooks e usa
 as conversas, contatos, consentimentos e fila do conector Meta.
 
+Versão publicada: **0.2.1**, incluindo o plugin PHP e o serviço Go.
+
 ## Dependências
 
-- Mautic 7, PHP 8.2 ou superior e conector `MauticMetaBundle` 0.14 com as extensões
-  `WhatsAppTransportInterface`, `TransportResolver` e `whatsapp_qr_session`.
-  A versão publicada 0.14 sem essas extensões não basta.
-- `MauticInboxBundle` com suporte ao tipo `whatsapp_qr_session`, para atendimento.
+- Mautic 7, PHP 8.2 ou superior e [MauticMetaBundle 0.14.2](https://github.com/raphaelcangucu/mautic-meta-bundle/releases/tag/v0.14.2) ou compatível.
+- [MauticInboxBundle 1.4.1](https://github.com/raphaelcangucu/mautic-inbox-bundle/releases/tag/v1.4.1) ou compatível, para atendimento.
 - Go 1.26 somente para compilar; binário estático Linux/amd64 em produção.
 - Whatsmeow fixado em `v0.0.0-20261005195255-6bb48c0f1ff0`.
 - SQLite privado para as credenciais do dispositivo; banco do Mautic para contatos
@@ -50,7 +50,7 @@ A sessão assinada deve coincidir com a sessão do evento. Eventos são deduplic
 por conta e ID de mensagem.
 
 API local autenticada: `GET /health`, `POST /sessions`, `GET /sessions/{id}/qr`,
-`POST /sessions/{id}/messages` e `DELETE /sessions/{id}`. DELETE apaga credenciais;
+`GET /sessions/{id}/events` (SSE), `POST /sessions/{id}/messages` e `DELETE /sessions/{id}`. DELETE apaga credenciais;
 não deve ser usado para resolver indiscriminadamente problemas de rede.
 
 A sessão salva é restaurada no reinício. Não use PM2 nem abra a porta 8088 na
@@ -93,3 +93,32 @@ fallback independente para falhas do mesmo protocolo. WEBJS exige um processo
 de navegador: sua memória e CPU precisam ser medidas antes de instalar no
 servidor compartilhado. WAHA foi pesquisado, não instalado nem validado com
 essa conta. O pareamento real já funciona no serviço Whatsmeow atualizado.
+
+## Pareamento em tempo real (SSE)
+
+A página de pareamento usa `EventSource` em `/s/whatsqr/connections/{assetId}/pair/events`.
+Essa rota exige login e a permissão `meta:connections:view`. O PHP libera a sessão
+antes de acompanhar o SSE privado do serviço Go; o token permanece no servidor.
+
+O serviço publica um retrato inicial e mudanças de QR/estado em memória, por conta,
+sem consultas periódicas ao banco ou requisições `/health` em loop. Assinantes lentos
+recebem o estado mais recente, sem bloquear o WhatsApp. Heartbeats mantêm o fluxo;
+as conexões duram no máximo 25 segundos e são renovadas automaticamente com cursor.
+O navegador conserva o cartão se o estado não mudou, usa retentativa com espera
+crescente após falhas e encerra o fluxo em páginas ocultas ou ao navegar.
+
+“Conectado”, “Reconectando” e perda das atualizações são estados distintos.
+Uma queda de rede nunca oferece apagar credenciais ou ler um QR desnecessário.
+Os POSTs manuais com CSRF continuam disponíveis para iniciar e renovar códigos
+expirados. O QR nunca é publicado em logs ou em URL pública.
+
+SSE ocupa um worker PHP enquanto a página estiver visível. Para separar esse uso
+por operadores dos requests normais do Mautic, a implantação usa um pool FPM
+exclusivo com quatro workers sob demanda e buffering desativado no Nginx.
+Os exemplos estão em `deploy/whatsqr-sse-pool.conf` e `deploy/whatsqr-sse-nginx.conf`.
+Ajuste os caminhos e replique as variáveis privadas necessárias no servidor;
+não publique credenciais no repositório.
+
+Envios novos por telefone consultam o identificador canônico no WhatsApp antes
+de enviar. Números brasileiros com o nono dígito aceitam a variante antiga de oito
+dígitos somente após a confirmação do próprio WhatsApp.

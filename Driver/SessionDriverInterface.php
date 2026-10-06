@@ -54,4 +54,12 @@ interface SessionDriverInterface
      * @return array<string, SessionState>
      */
     public function serviceSessions(): array;
+
+    /**
+     * Push state changes for one account. null means not started; heartbeats have
+     * their own callback. Returning false from either callback cancels the stream.
+     * @param callable(?SessionState): bool $onState
+     * @param callable(): bool $onHeartbeat
+     */
+    public function watchSession(MetaAsset $asset, callable $onState, callable $onHeartbeat): void;
 }

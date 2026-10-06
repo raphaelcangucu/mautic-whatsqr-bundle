@@ -377,6 +377,7 @@ func (c *whatsmeowClient) followQR(qrChan <-chan whatsmeow.QRChannelItem) {
 		switch item.Event {
 		case whatsmeow.QRChannelEventCode:
 			c.setQR(item.Code)
+			c.emit(Event{Kind: EventQRChanged})
 			c.logConnection("QR renewed (valid_for=%s)", item.Timeout)
 		case whatsmeow.QRChannelSuccess.Event:
 			// Quem muda o estado e o PairSuccess; aqui so se apaga o codigo
@@ -438,6 +439,12 @@ func (c *whatsmeowClient) SendText(ctx context.Context, to, text string) (string
 	dest, err := toJID(to)
 	if err != nil {
 		return "", err
+	}
+	if !strings.Contains(to, "@") {
+		dest, err = resolvePhone(ctx, dest.User, c.cli.IsOnWhatsApp)
+		if err != nil {
+			return "", err
+		}
 	}
 	resp, err := c.cli.SendMessage(ctx, dest, &waE2E.Message{Conversation: proto.String(text)})
 	if err != nil {

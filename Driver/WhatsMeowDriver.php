@@ -8,6 +8,7 @@ use MauticPlugin\MauticMetaBundle\Application\Exception\ChannelTemporarilyUnavai
 use MauticPlugin\MauticMetaBundle\Entity\MetaAsset;
 use MauticPlugin\MauticWhatsQrBundle\Domain\SentMessage;
 use MauticPlugin\MauticWhatsQrBundle\Domain\SessionState;
+use MauticPlugin\MauticWhatsQrBundle\Infrastructure\SessionStreamDecoder;
 use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 
@@ -113,6 +114,45 @@ final class WhatsMeowDriver implements SessionDriverInterface
         }
 
         return $states;
+    }
+
+    public function watchSession(MetaAsset $asset, callable $onState, callable $onHeartbeat): void
+    {
+        $id = $this->sessionId($asset);
+        $response = $this->http->request('GET', $this->baseUri.'/sessions/'.rawurlencode($id).'/events', [
+            'auth_bearer' => $this->token,
+            'headers' => ['Accept' => 'text/event-stream'],
+            'buffer' => false, 'timeout' => 10, 'max_duration' => 28, 'max_redirects' => 0,
+        ]);
+        try {
+            if (200 !== $response->getStatusCode()) {
+                throw new \RuntimeException('Atualizações da conexão temporariamente indisponíveis.');
+            }
+            $decoder = new SessionStreamDecoder();
+            foreach ($this->http->stream($response, 1.0) as $chunk) {
+                if ($chunk->isTimeout()) {
+                    if (false === $onHeartbeat()) { return; }
+                    continue;
+                }
+                foreach ($decoder->push($chunk->getContent()) as $frame) {
+                    if ('session' === $frame['event']) {
+                        $body = $this->decode($frame['data']);
+                        // A stream must never deliver another account's state/QR.
+                        if (($body['id'] ?? null) !== $id) {
+                            throw new \RuntimeException('Evento de conexão pertence a outra sessão.');
+                        }
+                        $state = 'ready' === ($body['status'] ?? '') ? null : $this->toSessionState($id, $body);
+                        if (false === $onState($state)) { return; }
+                    } elseif ('rotate' === $frame['event']) {
+                        return;
+                    } elseif (false === $onHeartbeat()) {
+                        return;
+                    }
+                }
+            }
+        } finally {
+            $response->cancel();
+        }
     }
 
     /**

@@ -203,6 +203,9 @@ func TestAClosedQrChannelStopsOfferingTheDeadCode(t *testing.T) {
 
 	esperar(t, func() bool { return "codigo-vivo" == c.CurrentQR() }, "o codigo devia ter sido guardado")
 
+	if ev := <-c.outbox; ev.Kind != EventQRChanged {
+		t.Fatalf("missing QR renewal: %v", ev.Kind)
+	}
 	close(qrChan)
 	<-pronto
 

@@ -1,12 +1,12 @@
     {% set stage = view.stage %}
-    <div class="whatsqr-card {{ stage == 'connected' ? 'whatsqr-card--ok' : (stage == 'not_done' ? 'whatsqr-card--bad' : '') }}">
+    <div class="whatsqr-card {{ stage == 'connected' ? 'whatsqr-card--ok' : (stage == 'not_done' ? 'whatsqr-card--bad' : (stage == 'reconnecting' ? 'whatsqr-card--wait' : '')) }}">
         <span class="whatsqr-stage">{{ ('mautic.whatsqr.pair.stage.'~stage)|trans }}</span>
 
         {% if stage == 'ready' %}
             <div class="whatsqr-figure"><i class="ri-qr-code-line" aria-hidden="true"></i></div>
             <div class="whatsqr-cardtext"><strong>{{ 'mautic.whatsqr.pair.ready.title'|trans }}</strong><p>{{ 'mautic.whatsqr.pair.ready.body'|trans }}</p></div>
             {% if canEdit %}<form method="post" action="{{ path('mautic_whatsqr_pair_start', {assetId: asset.id}) }}">
-                <input type="hidden" name="_token" value="{{ csrf_token('whatsqr_pair_start_'~asset.id) }}">
+                <input type="hidden" name="_token" value="{{ startToken is defined ? startToken : csrf_token('whatsqr_pair_start_'~asset.id) }}">
                 <button class="btn btn-primary" type="submit"><i class="ri-qr-code-line" aria-hidden="true"></i> {{ 'mautic.whatsqr.action.connect'|trans }}</button>
             </form>{% endif %}
         {% elseif stage == 'waiting' %}
@@ -24,15 +24,16 @@
             </div>
             <div class="whatsqr-aside">{{ 'mautic.whatsqr.pair.waiting.note'|trans }}</div>
 
-        {% elseif stage == 'connected' %}
+        {% elseif stage in ['connected', 'reconnecting'] %}
             <div class="whatsqr-figure">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                {% if stage == 'reconnecting' %}<i class="ri-refresh-line" aria-hidden="true"></i>{% else %}
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>{% endif %}
             </div>
             <div class="whatsqr-cardtext">
                 <strong>{{ view.jid|default(jid)|default(asset.name) }}</strong>
-                <p>{{ 'mautic.whatsqr.pair.connected.body'|trans }}</p>
+                <p>{{ ('mautic.whatsqr.pair.'~stage~'.body')|trans }}</p>
             </div>
-            <div class="whatsqr-aside">{{ 'mautic.whatsqr.pair.connected.note'|trans }}</div>
+            <div class="whatsqr-aside">{{ ('mautic.whatsqr.pair.'~stage~'.note')|trans }}</div>
             <a class="btn btn-primary" href="{{ path('mautic_inbox_index') }}">{{ 'mautic.whatsqr.action.inbox'|trans }}</a>
 
         {% else %}
@@ -59,7 +60,7 @@
                 <a class="btn btn-default" href="{{ path('mautic_whatsqr_pair', {assetId: asset.id}) }}">{{ 'mautic.whatsqr.action.refresh'|trans }}</a>
             {% elseif view.offersRetry and canEdit %}
                 <form method="post" action="{{ path('mautic_whatsqr_pair_restart', {assetId: asset.id}) }}">
-                    <input type="hidden" name="_token" value="{{ csrf_token('whatsqr_pair_restart_'~asset.id) }}">
+                    <input type="hidden" name="_token" value="{{ restartToken is defined ? restartToken : csrf_token('whatsqr_pair_restart_'~asset.id) }}">
                     <button class="btn btn-default">{{ 'mautic.whatsqr.action.new_code'|trans }}</button>
                 </form>
             {% else %}

@@ -2,13 +2,14 @@
 {% block mauticContent %}whatsqr{% endblock %}
 {% block headerTitle %}{{ 'mautic.whatsqr.pair.title'|trans }}{% endblock %}
 {% block content %}
-{{ includeStylesheet('plugins/MauticWhatsQrBundle/Assets/css/whatsqr.css?v=0.2.0') }}
-{{ includeScript('plugins/MauticWhatsQrBundle/Assets/js/whatsqr.js?v=0.2.0', 'whatsqrOnLoad', 'whatsqrOnLoad') }}
+{{ includeStylesheet('plugins/MauticWhatsQrBundle/Assets/css/whatsqr.css?v=0.2.1') }}
+{{ includeScript('plugins/MauticWhatsQrBundle/Assets/js/whatsqr.js?v=0.2.1', 'whatsqrOnLoad', 'whatsqrOnUnload') }}
 <div class="whatsqr">
     <div class="whatsqr-head"><div><h2>{{ 'mautic.whatsqr.pair.title'|trans }}</h2><p>{{ asset.name }}{% if asset.phoneNumber %} · {{ asset.phoneNumber }}{% endif %}</p></div>
         <a class="btn btn-default" href="{{ path('mautic_whatsqr_connections') }}">{{ 'mautic.whatsqr.action.back'|trans }}</a></div>
+    <div class="whatsqr-live" id="whatsqr-live-status" role="status" data-state="connecting"><i aria-hidden="true"></i><span>{{ 'mautic.whatsqr.live.connecting'|trans }}</span></div>
     <div class="whatsqr-pair-layout">
-        <section id="whatsqr-pair-status" data-stage="{{ view.stage }}" data-status-url="{{ path('mautic_whatsqr_pair_status', {assetId: asset.id}) }}" data-refresh-error="{{ 'mautic.whatsqr.refresh.error'|trans }}" aria-live="polite" aria-atomic="false">
+        <section id="whatsqr-pair-status" data-stage="{{ view.stage }}" data-version="{{ version }}" data-events-url="{{ path('mautic_whatsqr_pair_events', {assetId: asset.id}) }}" data-live-label="{{ 'mautic.whatsqr.live.connected'|trans }}" data-connecting-label="{{ 'mautic.whatsqr.live.connecting'|trans }}" data-paused-label="{{ 'mautic.whatsqr.live.paused'|trans }}" data-status-url="{{ path('mautic_whatsqr_pair_status', {assetId: asset.id}) }}" data-refresh-error="{{ 'mautic.whatsqr.live.unavailable'|trans }}" aria-live="polite" aria-atomic="false">
             {% include '@MauticWhatsQr/Connections/_pair_status.html.twig' %}
         </section>
         <aside class="whatsqr-instructions">

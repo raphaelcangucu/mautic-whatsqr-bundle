@@ -1,1 +1,13 @@
-dist/
+/dist/
+/vendor/
+/.phpunit.cache/
+/.phpunit.result.cache
+.DS_Store
+._*
+.env
+.env.*
+/service/whatsqr
+whatsqr.json
+*.db
+*.db-wal
+*.db-shm

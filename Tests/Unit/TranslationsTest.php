@@ -47,7 +47,7 @@ final class TranslationsTest extends TestCase
             $keys[] = 'mautic.whatsqr.state.'.$situation;
         }
 
-        foreach ([PairingView::READY, PairingView::WAITING, PairingView::CONNECTED, PairingView::NOT_DONE] as $stage) {
+        foreach ([PairingView::READY, PairingView::WAITING, PairingView::CONNECTED, PairingView::RECONNECTING, PairingView::NOT_DONE] as $stage) {
             $keys[] = 'mautic.whatsqr.pair.stage.'.$stage;
         }
 
