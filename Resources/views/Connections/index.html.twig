@@ -7,11 +7,11 @@
   fica do lado de la, porque template nao se testa por unidade.
 #}
 {% extends '@MauticCore/Default/content.html.twig' %}
-{% block mauticContent %}meta{% endblock %}
+{% block mauticContent %}whatsqr{% endblock %}
 {% block headerTitle %}{{ 'mautic.whatsqr.connections'|trans }}{% endblock %}
 
 {% block content %}
-{{ includeStylesheet('plugins/MauticWhatsQrBundle/Assets/css/whatsqr.css?v=20260919-1') }}
+{{ includeStylesheet('plugins/MauticWhatsQrBundle/Assets/css/whatsqr.css?v=0.2.0') }}
 <div class="whatsqr">
 
     <div class="whatsqr-head">

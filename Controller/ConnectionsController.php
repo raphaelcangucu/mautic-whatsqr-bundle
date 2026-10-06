@@ -17,6 +17,7 @@ use MauticPlugin\MauticWhatsQrBundle\Domain\SessionState;
 use MauticPlugin\MauticWhatsQrBundle\Driver\SessionDriverFactory;
 use MauticPlugin\MauticWhatsQrBundle\Infrastructure\QrEncoder;
 use Symfony\Component\HttpFoundation\RedirectResponse;
+use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -62,44 +63,52 @@ final class ConnectionsController extends CommonController
             throw $this->createAccessDeniedException();
         }
         $asset = $this->qrAsset($assets, $assetId);
-        $driver = $drivers->forAsset($asset);
+        return $this->view('@MauticWhatsQr/Connections/pair.html.twig', $this->pairParameters($asset, $permissions, $drivers, $screen));
+    }
 
+    public function status(int $assetId, CorePermissions $permissions, MetaAssetRepository $assets, SessionDriverFactory $drivers, PairingScreen $screen): JsonResponse
+    {
+        if (!$permissions->isGranted('meta:connections:view')) { throw $this->createAccessDeniedException(); }
+        $parameters = $this->pairParameters($this->qrAsset($assets, $assetId), $permissions, $drivers, $screen);
+        return new JsonResponse([
+            'stage' => $parameters['view']->stage,
+            'html' => $this->renderView('@MauticWhatsQr/Connections/_pair_status.html.twig', $parameters),
+        ], headers: ['Cache-Control' => 'private, no-store, max-age=0', 'X-Content-Type-Options' => 'nosniff']);
+    }
+
+    public function start(int $assetId, Request $request, CorePermissions $permissions, MetaAssetRepository $assets, SessionDriverFactory $drivers): RedirectResponse
+    {
+        if (!$permissions->isGranted('meta:connections:edit')
+            || !$this->isCsrfTokenValid('whatsqr_pair_start_'.$assetId, (string) $request->request->get('_token'))) {
+            throw $this->createAccessDeniedException();
+        }
+        $asset = $this->qrAsset($assets, $assetId);
         try {
-            $live = $driver->serviceSessions()[$asset->getExternalId()] ?? null;
-            // Sessao que o servico nao conhece e sessao que nunca abriu -- depois de um
-            // reinicio, ou na primeira vez. Abrir aqui, e nao num POST separado, e o que
-            // faz o QR estar na tela quando ela termina de carregar: um segundo clique
-            // para "comecar" seria um passo que nao decide nada.
-            $state = $live ?? $driver->openSession($asset);
+            $driver = $drivers->forAsset($asset);
+            if (!isset($driver->serviceSessions()[$asset->getExternalId()])) { $driver->openSession($asset); }
+        } catch (\Throwable $failed) {
+            $this->addFlash('error', $failed->getMessage());
+        }
+        return $this->redirectToRoute('mautic_whatsqr_pair', ['assetId' => $assetId], Response::HTTP_SEE_OTHER);
+    }
 
-            $view = $screen->view($state);
+    private function pairParameters(MetaAsset $asset, CorePermissions $permissions, SessionDriverFactory $drivers, PairingScreen $screen): array
+    {
+        try {
+            $driver = $drivers->forAsset($asset);
+            $state = $driver->serviceSessions()[$asset->getExternalId()] ?? null;
+            $view = null === $state ? new PairingView(PairingView::READY) : $screen->view($state);
             if (PairingView::WAITING === $view->stage) {
-                // O codigo e lido agora, e nao guardado da abertura: o WhatsApp o renova
-                // durante o pareamento, e um QR velho na tela e um scan que nao funciona
-                // sem nada explicando por que.
                 $view = new PairingView(PairingView::WAITING, qr: $driver->pairingQr($asset) ?? $state->qr);
             }
-        } catch (\RuntimeException $unreachable) {
-            // ChannelTemporarilyUnavailable estende \RuntimeException, e a resposta
-            // ilegivel do servico tambem chega assim. Os dois sao "nao deu para falar com
-            // o servico", e nenhum diz nada sobre o numero em si.
-            $view = $screen->serviceUnreachable($unreachable->getMessage());
-        } catch (\DomainException $refused) {
-            // Recusa do proprio servico que nao muda sozinha: id sem segredo configurado,
-            // token errado, motor sem implementacao. Botao nenhum resolve isso.
-            $view = new PairingView(
-                PairingView::NOT_DONE,
-                cause: PairingView::CAUSE_REFUSED,
-                reason: $refused->getMessage(),
-            );
+        } catch (\RuntimeException $failed) {
+            $view = $screen->serviceUnreachable($failed->getMessage());
+        } catch (\DomainException $failed) {
+            $view = new PairingView(PairingView::NOT_DONE, cause: PairingView::CAUSE_REFUSED, reason: $failed->getMessage());
         }
-
-        return $this->view('@MauticWhatsQr/Connections/pair.html.twig', [
-            'asset' => $asset,
-            'view'  => $view,
-            'qrSvg' => $this->qrSvg($view),
-            'jid'   => trim((string) ($asset->getSettings()[SessionState::SETTING_JID] ?? '')) ?: null,
-        ]);
+        return ['asset' => $asset, 'view' => $view, 'qrSvg' => $this->qrSvg($view),
+            'canEdit' => $permissions->isGranted('meta:connections:edit'),
+            'jid' => trim((string) ($asset->getSettings()[SessionState::SETTING_JID] ?? '')) ?: null];
     }
 
     /**
@@ -118,6 +127,7 @@ final class ConnectionsController extends CommonController
         CorePermissions $permissions,
         MetaAssetRepository $assets,
         SessionDriverFactory $drivers,
+        PairingScreen $screen,
     ): RedirectResponse {
         if (!$permissions->isGranted('meta:connections:edit')
             || !$this->isCsrfTokenValid('whatsqr_pair_restart_'.$assetId, (string) $request->request->get('_token'))) {
@@ -126,7 +136,16 @@ final class ConnectionsController extends CommonController
         $asset = $this->qrAsset($assets, $assetId);
 
         try {
-            $drivers->forAsset($asset)->closeSession($asset);
+            $driver = $drivers->forAsset($asset);
+            $live = $driver->serviceSessions()[$asset->getExternalId()] ?? null;
+            // A crafted request must never erase a connected session's credentials.
+            if (null !== $live) {
+                if (!$screen->canReset($live)) {
+                    throw new \DomainException($this->translator->trans('mautic.whatsqr.restart.refused'));
+                }
+                $driver->closeSession($asset);
+            }
+            $driver->openSession($asset);
         } catch (\Throwable $failed) {
             // Nao apagou: seguir para a abertura deixaria o 409 de "essa sessao ja esta
             // aberta" como unica explicacao na tela seguinte, que nao diz nada a ninguem.
@@ -178,13 +197,15 @@ final class ConnectionsController extends CommonController
      */
     private function view(string $template, array $parameters): Response
     {
-        return $this->delegateView([
+        $response = $this->delegateView([
             'contentTemplate' => $template,
             'viewParameters'  => $parameters,
             // O mauticContent e "meta" e nao "whatsqr" porque estas telas vivem dentro da
             // navegacao do Meta bundle: um nome proprio faria o painel trocar de secao ao
             // abrir a lista de numeros, e o atendente perderia o menu de onde veio.
-            'passthroughVars' => ['mauticContent' => 'meta', 'route' => $this->getCurrentRequest()->getRequestUri()],
+            'passthroughVars' => ['mauticContent' => 'whatsqr', 'route' => $this->getCurrentRequest()->getRequestUri()],
         ]);
+        $response->headers->set('Cache-Control', 'private, no-store, max-age=0');
+        return $response;
     }
 }

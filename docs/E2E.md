@@ -2,23 +2,39 @@
 
 Canal de WhatsApp por QR Code (**não homologado**) para Mautic 7.
 
-## Estado em 19/09/2026
+## Estado em 06/10/2026
 
-Os E2E do plano 2 provaram o serviço em Go sozinho. Os deste arquivo provam o
-Mautic incluído. Cinco dos seis precisam de um número pareado de verdade, e o
-pareamento está bloqueado: o chip **+55 31 7505-3794** foi reativado no WhatsApp
-Business em 18/09, e uma reativação recente bloqueia o vínculo de dispositivo
-companheiro por algumas horas. O número precisa ser usado normalmente antes de
-tentar de novo.
+O pareamento foi confirmado pelo operador no celular e pelo servidor às
+02:59:48 UTC: `PairSuccess`, autenticação às 02:59:49 e `Connected` às 02:59:52.
+Uma credencial está salva no SQLite e o Mautic registrou status, JID e telefone.
+A página de pareamento mostra conectado. O erro de rota do botão de Inbox foi
+corrigido e validado no navegador.
 
-| # | O que prova | Situação |
-|---|---|---|
-| 1 | Parear pela tela de Conexões; a tela vira "conectado" sozinha | **espera o chip** |
-| 2 | Mensagem de outro celular cai na caixa com o selo `QR`, e o push chega | **espera o chip** |
-| 3 | Responder pela caixa; a bolha aparece na hora e a mensagem chega | **espera o chip** |
-| 4 | Modo avião: três respostas dizem "na fila", saem na ordem, e **quanto tempo levam** | **espera o chip** |
-| 5 | Foto vira mensagem não suportada com texto, sem sumir | **espera o chip** |
-| 6 | **Opt-out recusado num número QR** | **provado, 19/09/2026** |
+Antes da atualização, a tentativa permaneceu em pareamento e expirou sem
+`PairSuccess`. O serviço foi atualizado de `2e338d0ee73d` para `6bb48c0f1ff0`,
+com versão Web 2.3000.1049294120. O novo código conectou. Isso comprova o resultado
+da atualização e nova tentativa, mas não isola qual mudança resolveu a falha.
+Não há evidência atual para atribuir a falha anterior à reativação do chip.
+
+| Prova | Resultado |
+|---|---|
+| Pareamento real no celular | Confirmado pelo operador |
+| Autenticação e sessão persistida | Confirmadas no servidor |
+| Estado e telefone no Mautic | Confirmados por consulta somente leitura |
+| Página mostra conectado e abre Inbox | Validada no navegador |
+| Mensagem real recebida no Inbox | Em validação |
+| Resposta real pelo Inbox | Ainda não validada |
+| Reinício sem novo QR | Confirmado: restauração e autenticação às 03:07:15 UTC |
+| Queda prolongada e fila em ordem | Ainda não validadas nesta instalação |
+| Recibos de leitura | Não implementados no plugin |
+
+Verificações locais: 76 testes PHP do plugin (350 asserções), testes unitários
+Go de API/webhook e 34 funções sem banco de sessão/estado, 346 arquivos PHP sem
+erros de sintaxe. Nenhum teste de banco foi executado contra produção.
+
+Backups verificados ficam em `/home/forge/whatsqr-backups/20261006T024148Z` e
+`/home/forge/whatsqr-backups/20261006T025626Z`; incluem dump Mautic e cópia SQLite
+consistente. Contêm segredos e não devem ser publicados.
 
 ## E2E 6 — provado sem WhatsApp nenhum, de propósito
 
@@ -52,7 +68,7 @@ Corrigido no conector (`OutboundPolicy`), com os limites de anti-spam mantidos
 de propósito: um número não homologado é justamente onde disparar em massa
 termina em banimento.
 
-## Quando o chip liberar
+## Próximas provas controladas
 
 1. Abrir a sessão pela tela de Conexões, não por `curl` — é a tela que precisa
    ser provada.

@@ -149,3 +149,18 @@
     .whatsqr-head h2 { font-size: 19px; }
     .whatsqr-card { padding: 18px; }
 }
+
+.whatsqr { padding:24px; max-width:1280px; margin:0 auto; }
+.whatsqr-pair-layout { display:grid; grid-template-columns:minmax(320px,1fr) minmax(280px,.8fr); gap:24px; align-items:start; }
+.whatsqr-card { margin:0; width:100%; max-width:none; min-height:430px; }
+.whatsqr-figure .ri-qr-code-line { font-size:100px; color:#535fa4; }
+.whatsqr-figure svg { width:260px; max-width:100%; height:auto; }
+.whatsqr-instructions { padding:28px; background:#fff; border:1px solid #e7e9ed; border-radius:12px; }
+.whatsqr-instructions h3 { font-size:18px; margin:0 0 22px; }
+.whatsqr-instructions ol { padding-left:22px; line-height:1.7; margin:0; }
+.whatsqr-instructions li { padding:0 0 18px 8px; }
+.whatsqr-integration { display:flex; gap:12px; border-top:1px solid #e7e9ed; padding-top:24px; margin-top:8px; }
+.whatsqr-integration > i { color:#535fa4; font-size:24px; }
+.whatsqr-integration p,.whatsqr-muted { color:#737b8b; font-size:13px; line-height:1.7; }
+.whatsqr-refresh-error { color:#94600c; padding:12px; background:#fff6e5; border-radius:8px; }
+@media(max-width:820px) { .whatsqr { padding:16px; } .whatsqr-pair-layout { grid-template-columns:1fr; } .whatsqr-card { min-height:360px; } }

@@ -1,0 +1,70 @@
+    {% set stage = view.stage %}
+    <div class="whatsqr-card {{ stage == 'connected' ? 'whatsqr-card--ok' : (stage == 'not_done' ? 'whatsqr-card--bad' : '') }}">
+        <span class="whatsqr-stage">{{ ('mautic.whatsqr.pair.stage.'~stage)|trans }}</span>
+
+        {% if stage == 'ready' %}
+            <div class="whatsqr-figure"><i class="ri-qr-code-line" aria-hidden="true"></i></div>
+            <div class="whatsqr-cardtext"><strong>{{ 'mautic.whatsqr.pair.ready.title'|trans }}</strong><p>{{ 'mautic.whatsqr.pair.ready.body'|trans }}</p></div>
+            {% if canEdit %}<form method="post" action="{{ path('mautic_whatsqr_pair_start', {assetId: asset.id}) }}">
+                <input type="hidden" name="_token" value="{{ csrf_token('whatsqr_pair_start_'~asset.id) }}">
+                <button class="btn btn-primary" type="submit"><i class="ri-qr-code-line" aria-hidden="true"></i> {{ 'mautic.whatsqr.action.connect'|trans }}</button>
+            </form>{% endif %}
+        {% elseif stage == 'waiting' %}
+            <div class="whatsqr-figure">
+                {#
+                  O codigo vai desenhado aqui dentro, e nao numa URL de imagem: um QR
+                  servido por endereco proprio e um QR que alguem abre sem sessao, e quem
+                  o abre pareia o numero.
+                #}
+                {% if qrSvg %}{{ qrSvg|raw }}{% else %}<div class="whatsqr-reason">{{ view.qr }}</div>{% endif %}
+            </div>
+            <div class="whatsqr-cardtext">
+                <strong>{{ 'mautic.whatsqr.pair.waiting.title'|trans }}</strong>
+                <p>{{ 'mautic.whatsqr.pair.waiting.body'|trans }}</p>
+            </div>
+            <div class="whatsqr-aside">{{ 'mautic.whatsqr.pair.waiting.note'|trans }}</div>
+
+        {% elseif stage == 'connected' %}
+            <div class="whatsqr-figure">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            </div>
+            <div class="whatsqr-cardtext">
+                <strong>{{ view.jid|default(jid)|default(asset.name) }}</strong>
+                <p>{{ 'mautic.whatsqr.pair.connected.body'|trans }}</p>
+            </div>
+            <div class="whatsqr-aside">{{ 'mautic.whatsqr.pair.connected.note'|trans }}</div>
+            <a class="btn btn-primary" href="{{ path('mautic_inbox_index') }}">{{ 'mautic.whatsqr.action.inbox'|trans }}</a>
+
+        {% else %}
+            <div class="whatsqr-figure">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 16H3z M12 10v4 M12 17h.01" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            </div>
+            <div class="whatsqr-cardtext">
+                <strong>{{ ('mautic.whatsqr.pair.cause.'~(view.cause|default('refused'))~'.title')|trans }}</strong>
+                <p>{{ ('mautic.whatsqr.pair.cause.'~(view.cause|default('refused'))~'.body')|trans({'%jid%': jid|default('—')}) }}</p>
+            </div>
+            {% if view.reason %}
+                <div class="whatsqr-aside">
+                    {{ 'mautic.whatsqr.pair.reason'|trans }}
+                    <div class="whatsqr-reason">{{ view.reason }}</div>
+                </div>
+            {% endif %}
+
+            {#
+              O botao existe ou nao existe conforme a decisao ja tomada. Quando ele nao
+              existe, o que fica no lugar e o que fazer em seguida -- porque "nao deu"
+              sozinho nao resolve o problema de ninguem.
+            #}
+            {% if view.cause == 'service_down' %}
+                <a class="btn btn-default" href="{{ path('mautic_whatsqr_pair', {assetId: asset.id}) }}">{{ 'mautic.whatsqr.action.refresh'|trans }}</a>
+            {% elseif view.offersRetry and canEdit %}
+                <form method="post" action="{{ path('mautic_whatsqr_pair_restart', {assetId: asset.id}) }}">
+                    <input type="hidden" name="_token" value="{{ csrf_token('whatsqr_pair_restart_'~asset.id) }}">
+                    <button class="btn btn-default">{{ 'mautic.whatsqr.action.new_code'|trans }}</button>
+                </form>
+            {% else %}
+                <div class="whatsqr-aside">{{ ('mautic.whatsqr.pair.cause.'~(view.cause|default('refused'))~'.exit')|trans }}</div>
+            {% endif %}
+        {% endif %}
+    </div>
+

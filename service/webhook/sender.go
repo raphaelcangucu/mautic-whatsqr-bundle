@@ -308,6 +308,7 @@ func (s *Sender) deliver(ev *event) {
 		status, err := s.post(ev, secret)
 		switch {
 		case err == nil && status >= 200 && status < 300:
+			s.opts.Logf("webhook: delivered kind=%s session=%s status=%d", ev.kind, ev.sessionID, status)
 			return
 		case err == nil && !retryable(status):
 			// Tentar de novo um 401 para sempre nao e a mesma coisa que
@@ -444,6 +445,7 @@ type payload struct {
 type inboundBody struct {
 	ID          string `json:"id"`
 	From        string `json:"from"`
+	Name        string `json:"name,omitempty"`
 	Text        string `json:"text"`
 	Timestamp   int64  `json:"timestamp"`
 	Unsupported bool   `json:"unsupported"`
@@ -480,6 +482,7 @@ func newEvent(n session.Notice) (*event, error) {
 		body.Message = &inboundBody{
 			ID:          n.Message.ID,
 			From:        n.Message.From,
+			Name:        n.Message.Name,
 			Text:        n.Message.Text,
 			Timestamp:   n.Message.Timestamp.Unix(),
 			Unsupported: n.Message.Unsupported,

@@ -239,7 +239,7 @@ final class ConnectionsOverviewTest extends TestCase
      * sobre "conectado" seriam duas verdades para a mesma pergunta -- e a fila decide pela
      * gravada.
      */
-    public function testTheHealthAnswerDoesNotOverrideTheOtherSituations(): void
+    public function testLiveHealthOverridesAStaleRecordedState(): void
     {
         $asset = $this->asset(AssetType::WhatsAppQrSession, 'Comercial', [
             SessionState::SETTING_STATUS => SessionState::RECONNECTING,
@@ -248,7 +248,7 @@ final class ConnectionsOverviewTest extends TestCase
 
         $row = $this->rowOf($this->overview()->rows($live), 'Comercial');
 
-        self::assertSame(SessionState::RECONNECTING, $row->situation);
+        self::assertSame(SessionState::CONNECTED, $row->situation);
         // Reconectando e esperar, e esperar e o certo a fazer: uma tela que pede socorro
         // a cada oscilacao de linha deixa de ser lida.
         self::assertFalse($row->needsSomebody);

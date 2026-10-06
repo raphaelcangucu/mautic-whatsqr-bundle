@@ -10,7 +10,10 @@ import (
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waAdv"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
+	"google.golang.org/protobuf/proto"
 )
 
 // O cliente desta borda continua sem teste -- ele precisa de um WhatsApp de
@@ -289,5 +292,19 @@ func TestTheQrContextOutlivesTheRequestThatOpenedTheSession(t *testing.T) {
 	case <-janela.Done():
 	case <-time.After(2 * time.Second):
 		t.Fatal("a janela sobreviveu ao fim da sessao")
+	}
+}
+
+func TestTranslatePrivacySenderUsesAlternatePhoneAndDisplayName(t *testing.T) {
+	evt := &events.Message{
+		Info: types.MessageInfo{MessageSource: types.MessageSource{
+			Sender:    types.NewJID("opaque-id", types.HiddenUserServer),
+			SenderAlt: types.NewJID("5531999990000", types.DefaultUserServer),
+		}, PushName: "Contato de teste"},
+		Message: &waE2E.Message{Conversation: proto.String("olá")},
+	}
+	got := translateMessage(evt)
+	if got == nil || got.From != "5531999990000@s.whatsapp.net" || got.Name != "Contato de teste" {
+		t.Fatalf("alternate phone/name lost: %+v", got)
 	}
 }

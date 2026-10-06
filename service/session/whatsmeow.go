@@ -293,7 +293,14 @@ func newWhatsmeowClient(device *store.Device, log waLog.Logger) *whatsmeowClient
 	return c
 }
 
+func (c *whatsmeowClient) logConnection(format string, args ...any) {
+	if c.cli != nil && c.cli.Log != nil {
+		c.cli.Log.Infof(format, args...)
+	}
+}
+
 func (c *whatsmeowClient) Connect(ctx context.Context) (<-chan Event, error) {
+	c.logConnection("Starting connection (stored_device=%t, web_version=%s)", c.cli.Store.ID != nil, store.GetWAVersion())
 	var qrChan <-chan whatsmeow.QRChannelItem
 	isNew := c.cli.Store.ID == nil
 	if isNew {
@@ -343,6 +350,7 @@ func (c *whatsmeowClient) firstQR(ctx context.Context, qrChan <-chan whatsmeow.Q
 			}
 			if item.Event == whatsmeow.QRChannelEventCode {
 				c.setQR(item.Code)
+				c.logConnection("Initial QR ready (valid_for=%s)", item.Timeout)
 				return nil
 			}
 			if item.Error != nil {
@@ -363,9 +371,13 @@ func (c *whatsmeowClient) followQR(qrChan <-chan whatsmeow.QRChannelItem) {
 	// canal seria indistinguivel de um pareamento que deu certo.
 	anunciado := false
 	for item := range qrChan {
+		if item.Event != whatsmeow.QRChannelEventCode {
+			c.logConnection("Pairing outcome: %s", item.Event)
+		}
 		switch item.Event {
 		case whatsmeow.QRChannelEventCode:
 			c.setQR(item.Code)
+			c.logConnection("QR renewed (valid_for=%s)", item.Timeout)
 		case whatsmeow.QRChannelSuccess.Event:
 			// Quem muda o estado e o PairSuccess; aqui so se apaga o codigo
 			// para a tela nao continuar oferecendo um QR ja usado.
@@ -506,6 +518,14 @@ func (c *whatsmeowClient) emit(ev Event) {
 // decide e apenas qual evento aconteceu, nao o que ele significa para a
 // sessao.
 func (c *whatsmeowClient) translate(raw any) {
+	// Log event types only: QR payloads, passkeys and message bodies are credentials/private data.
+	switch raw.(type) {
+	case *events.QR, *events.RotateADVSecret, *events.PairSuccess, *events.PairError,
+		*events.PairPasskeyRequest, *events.PairPasskeyConfirmation, *events.PairPasskeyError,
+		*events.Connected, *events.Disconnected, *events.LoggedOut,
+		*events.ClientOutdated, *events.ConnectFailure, *events.StreamReplaced:
+		c.logConnection("Connection event: %T", raw)
+	}
 	switch evt := raw.(type) {
 	case *events.PairSuccess:
 		jid := evt.ID.ToNonAD().String()
@@ -561,7 +581,9 @@ func (c *whatsmeowClient) translate(raw any) {
 		c.emit(Event{Kind: EventFailed, Reason: fmt.Sprintf("%s: %s", evt.Reason, evt.Message)})
 
 	case *events.Message:
+		c.logConnection("Message event (from_me=%t, group=%t)", evt.Info.IsFromMe, evt.Info.IsGroup)
 		if msg := translateMessage(evt); msg != nil {
+			c.logConnection("Private inbound accepted (unsupported=%t)", msg.Unsupported)
 			c.emit(Event{Kind: EventMessage, Message: msg})
 		}
 
@@ -596,9 +618,16 @@ func translateMessage(evt *events.Message) *Inbound {
 	if text == "" {
 		text = m.GetExtendedTextMessage().GetText()
 	}
+	sender := evt.Info.Sender.ToNonAD()
+	// Use the protocol's alternate phone address when a privacy LID is supplied.
+	// Never interpret opaque LID digits as a phone number.
+	if sender.Server == types.HiddenUserServer && evt.Info.SenderAlt.Server == types.DefaultUserServer {
+		sender = evt.Info.SenderAlt.ToNonAD()
+	}
 	return &Inbound{
 		ID:   evt.Info.ID,
-		From: evt.Info.Sender.ToNonAD().String(),
+		From: sender.String(),
+		Name: evt.Info.PushName,
 		Text: text,
 		// Midia nao entra nesta etapa, mas tem que aparecer: o cliente
 		// manda a foto do boleto e escreve "e esse aqui", e sem a marca o

@@ -152,6 +152,9 @@ final class InboundIngestor
             $this->identities->optOut($identity, 'whatsapp_keyword');
         }
 
+        $displayName = trim((string) ($inbound['name'] ?? ''));
+        if ('' !== $displayName) { $payload['contact']['profile']['name'] = mb_substr($displayName, 0, 150); }
+
         $payload['whatsqr'] = [
             'jid' => $jid->raw,
             'phone_resolved' => $resolved,

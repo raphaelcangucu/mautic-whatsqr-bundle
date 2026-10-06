@@ -96,6 +96,7 @@ final class SessionStateRecorder
             return false;
         }
 
+        if (preg_match('/^(\d+)(?::\d+)?@s\.whatsapp\.net$/', $jid, $matched)) { $asset->setPhoneNumber('+'.$matched[1]); }
         $asset->setSettings($settings);
         $this->entityManager->persist($asset);
         $this->entityManager->flush();

@@ -69,6 +69,7 @@ type Event struct {
 type Inbound struct {
 	ID        string
 	From      string // JID de quem mandou
+	Name      string // Display name supplied by WhatsApp
 	Text      string
 	Timestamp time.Time
 	// Unsupported marca o que chegou e nao vira texto -- midia, sobretudo.

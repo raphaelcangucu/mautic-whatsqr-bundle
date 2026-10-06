@@ -14,6 +14,7 @@ namespace MauticPlugin\MauticWhatsQrBundle\Domain;
 final readonly class PairingView
 {
     /** Esperando alguem escanear: ha QR na tela. */
+    public const READY = 'ready';
     public const WAITING = 'waiting';
     /** Escaneou: o numero ja recebe. */
     public const CONNECTED = 'connected';

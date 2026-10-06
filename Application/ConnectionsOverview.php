@@ -57,6 +57,7 @@ final class ConnectionsOverview
         private readonly MetaAssetRepository $assets,
         private readonly MetaOutboundJobRepository $jobs,
         private readonly MetaMessageRepository $messages,
+        private readonly ?ConnectionStatistics $statistics = null,
     ) {
     }
 
@@ -72,7 +73,8 @@ final class ConnectionsOverview
             return [];
         }
 
-        $queued = $this->queuedByAsset(array_keys($numbers));
+        $stats = $this->statistics?->forAssets(array_keys($numbers));
+        $queued = null === $stats ? $this->queuedByAsset(array_keys($numbers)) : ['counts' => $stats['queued'], 'capped' => false];
         $counts = $queued['counts'];
         // O teto vale para a tela inteira, e nao so para as linhas que contaram alguma
         // coisa: o corte e por id crescente, entao um numero que voltou zero pode ter a
@@ -94,7 +96,7 @@ final class ConnectionsOverview
                 reason: $live?->reason,
                 queued: $counts[$assetId] ?? 0,
                 queuedCapped: $capped,
-                lastMessageAt: $this->lastMessageAt($asset),
+                lastMessageAt: null === $stats ? $this->lastMessageAt($asset) : ($stats['last'][$assetId] ?? null),
                 jid: $this->jid($asset, $live),
             );
         }
@@ -136,8 +138,8 @@ final class ConnectionsOverview
      */
     private function situation(MetaAsset $asset, ?SessionState $live): string
     {
-        if (null !== $live && SessionState::AMBIGUOUS_CREDENTIAL === $live->status) {
-            return SessionState::AMBIGUOUS_CREDENTIAL;
+        if (null !== $live) {
+            return $live->status;
         }
 
         $recorded = trim((string) ($asset->getSettings()[SessionState::SETTING_STATUS] ?? ''));

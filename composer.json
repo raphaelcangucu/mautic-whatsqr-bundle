@@ -6,7 +6,7 @@
     "require": {
         "php": ">=8.2",
         "mautic/core-lib": "^7.0",
-        "raphaelcangucu/mautic-meta-bundle": "^0.13.0"
+        "raphaelcangucu/mautic-meta-bundle": "^0.14"
     },
     "autoload": {
         "psr-4": {

@@ -74,6 +74,12 @@ final class PairingScreen
      * isto pelo caminho da recusa esconderia o botao no unico caso em que ele resolve
      * sozinho.
      */
+    public function canReset(SessionState $state): bool
+    {
+        $view = $this->view($state);
+        return $view->offersRetry && in_array($view->cause, [PairingView::CAUSE_EXPIRED, PairingView::CAUSE_UNPAIRED], true);
+    }
+
     public function serviceUnreachable(string $message): PairingView
     {
         return new PairingView(
