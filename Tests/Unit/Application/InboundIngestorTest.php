@@ -167,6 +167,22 @@ final class InboundIngestorTest extends TestCase
         self::assertSame('opt_out', $message->getPayload()['whatsqr']['consent_keyword']);
     }
 
+    public function testAttachmentKeepsItsTypeCaptionAndWakesTheInboxOnce(): void
+    {
+        $asset = $this->qrAsset();
+        $event = $this->messageEvent('5511999999999@s.whatsapp.net', 'segue o relatório', false);
+        $event['message']['attachment'] = ['type' => 'document', 'id' => str_repeat('c', 64), 'filename' => 'relatório.pdf', 'file_size' => 200];
+        $ingestor = $this->inboundIngestor();
+        $message = $ingestor->ingest($asset, $event);
+        self::assertSame('document', $message?->getMessageType());
+        self::assertSame('segue o relatório', $message?->getPayload()['message']['document']['caption']);
+        self::assertSame(str_repeat('c', 64), $message?->getPayload()['message']['document']['id']);
+        self::assertNotNull($message?->getConversation());
+        self::assertNull($ingestor->ingest($asset, $event));
+        $notifications = array_filter($this->inboxCalls, static fn (array $call): bool => 'messagePersisted' === $call['call']);
+        self::assertCount(1, $notifications);
+    }
+
     public function testASessionEventIsNotAMessage(): void
     {
         // Queda e reconexao sao estado do numero, nao conversa. Gravar uma mensagem por

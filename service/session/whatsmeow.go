@@ -21,6 +21,7 @@ import (
 	// CGO o binario deixa de ser estatico -- que e metade do motivo de este
 	// servico ser em Go: ele e compilado no macOS e enviado pronto para um
 	// Linux x86_64 que nao tem toolchain nenhuma.
+	"github.com/macro-markets/whatsqr/media"
 	_ "modernc.org/sqlite"
 )
 
@@ -241,8 +242,10 @@ func (s *WhatsmeowStore) Close() error { return s.container.Close() }
 
 // whatsmeowClient implementa Client com a biblioteca de verdade.
 type whatsmeowClient struct {
-	cli    *whatsmeow.Client
-	outbox chan Event
+	cli          *whatsmeow.Client
+	mediaStore   *media.Store
+	mediaSession string
+	outbox       chan Event
 
 	// stopped e fechado por Disconnect. Todo envio para o canal de eventos
 	// escuta ele tambem: sem isso, um handler do whatsmeow ficaria preso
@@ -278,6 +281,7 @@ type whatsmeowClient struct {
 
 func newWhatsmeowClient(device *store.Device, log waLog.Logger) *whatsmeowClient {
 	cli := whatsmeow.NewClient(device, log)
+	cli.SetMediaHTTPClient(attachmentHTTPClient())
 	// Reconexao automatica ligada: a queda e rotina neste canal, e o
 	// whatsmeow volta sozinho. Quem decide quando desistir continua sendo a
 	// janela do state.go, cobrada pelo gerente.
@@ -590,6 +594,7 @@ func (c *whatsmeowClient) translate(raw any) {
 	case *events.Message:
 		c.logConnection("Message event (from_me=%t, group=%t)", evt.Info.IsFromMe, evt.Info.IsGroup)
 		if msg := translateMessage(evt); msg != nil {
+			c.captureMedia(evt, msg)
 			c.logConnection("Private inbound accepted (unsupported=%t)", msg.Unsupported)
 			c.emit(Event{Kind: EventMessage, Message: msg})
 		}

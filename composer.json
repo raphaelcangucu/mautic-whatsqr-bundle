@@ -22,6 +22,6 @@
         }
     ],
     "suggest": {
-        "raphaelcangucu/mautic-inbox-bundle": "^1.4.1 for human support through the omnichannel Inbox"
+        "raphaelcangucu/mautic-inbox-bundle": "^1.5.0 for participant avatars and secure incoming attachments in the omnichannel Inbox"
     }
 }

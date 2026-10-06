@@ -17,6 +17,7 @@ use MauticPlugin\MauticMetaBundle\Entity\MetaAsset;
 use MauticPlugin\MauticMetaBundle\Entity\MetaMessage;
 use MauticPlugin\MauticMetaBundle\Entity\MetaMessageRepository;
 use MauticPlugin\MauticWhatsQrBundle\Domain\InboundJid;
+use MauticPlugin\MauticWhatsQrBundle\Domain\AttachmentReference;
 use MauticPlugin\MauticWhatsQrBundle\Domain\WebhookEventType;
 use Psr\Log\LoggerInterface;
 
@@ -140,6 +141,11 @@ final class InboundIngestor
         $identity = $this->identities->registerInteraction($asset, $recipient, null, $contact);
 
         $unsupported = true === ($inbound['unsupported'] ?? false);
+        $attachment = AttachmentReference::fromInbound($inbound);
+        if (null !== $attachment) {
+            $unsupported = false;
+            $payload['message'][$attachment->type] = ['id' => $attachment->id, 'filename' => $attachment->filename, 'caption' => (string) ($inbound['text'] ?? ''), 'file_size' => $attachment->size];
+        }
         $text = (string) ($inbound['text'] ?? '');
         $keyword = $unsupported ? null : $this->keywords->match($text);
         if ('opt_in' === $keyword) {
@@ -170,10 +176,8 @@ final class InboundIngestor
             // a conversa existir num lugar que nenhuma tela consulta.
             ->setChannel('whatsapp')
             ->setDirection('inbound')
-            // Midia esta fora do escopo e nao pode sumir: a caixa ja desenha `unsupported`
-            // com o texto pedindo para reenviar. Baixar o arquivo passaria pelo Graph, e
-            // credencial de Graph e o que este canal justamente nao tem.
-            ->setMessageType($unsupported ? 'unsupported' : 'text')
+            // QR attachments use the private service, never the official Graph transport.
+            ->setMessageType($attachment?->type ?? ($unsupported ? 'unsupported' : 'text'))
             ->setContact($identity->getContact())
             ->setRecipient($recipient)
             // O corpo fica como chegou: e o unico registro do que o WhatsApp entregou.

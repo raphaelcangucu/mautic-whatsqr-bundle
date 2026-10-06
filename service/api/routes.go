@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/macro-markets/whatsqr/media"
 	"log"
 	"net"
 	"net/http"
@@ -80,13 +81,15 @@ type Options struct {
 
 	// MaxBody e o teto do corpo de um pedido.
 	MaxBody int64
+	Media   *media.Store
 
 	Logf func(format string, args ...any)
 }
 
 // Server serve as cinco rotas.
 type Server struct {
-	opts Options
+	opts    Options
+	avatars *avatarCache
 }
 
 func NewServer(opts Options) *Server {
@@ -96,7 +99,7 @@ func NewServer(opts Options) *Server {
 	if opts.Logf == nil {
 		opts.Logf = log.Printf
 	}
-	return &Server{opts: opts}
+	return &Server{opts: opts, avatars: newAvatarCache()}
 }
 
 // route e uma linha da tabela de rotas. A tabela existe como dado, e nao
@@ -114,6 +117,8 @@ func (s *Server) routes() []route {
 		{"POST /sessions", s.openSession},
 		{"GET /sessions/{id}/qr", s.sessionQR},
 		{"GET /sessions/{id}/events", s.sessionEvents},
+		{"GET /sessions/{id}/avatar", s.profileImage},
+		{"GET /sessions/{id}/media/{mediaID}", s.attachment},
 		{"DELETE /sessions/{id}", s.closeSession},
 		{"POST /sessions/{id}/messages", s.sendMessage},
 		{"GET /health", s.health},

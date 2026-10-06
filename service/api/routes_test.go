@@ -296,12 +296,14 @@ func TestEveryRouteRequiresTheToken(t *testing.T) {
 	// Sem isto, apagar uma rota da tabela faria o laco cobrir quatro e o
 	// teste continuar verde.
 	want := map[string]bool{
-		"POST /sessions":               true,
-		"GET /sessions/{id}/qr":        true,
-		"GET /sessions/{id}/events":    true,
-		"DELETE /sessions/{id}":        true,
-		"POST /sessions/{id}/messages": true,
-		"GET /health":                  true,
+		"POST /sessions":                     true,
+		"GET /sessions/{id}/qr":              true,
+		"GET /sessions/{id}/events":          true,
+		"GET /sessions/{id}/avatar":          true,
+		"GET /sessions/{id}/media/{mediaID}": true,
+		"DELETE /sessions/{id}":              true,
+		"POST /sessions/{id}/messages":       true,
+		"GET /health":                        true,
 	}
 	routes := h.server.routes()
 	for _, r := range routes {

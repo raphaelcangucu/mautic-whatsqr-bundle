@@ -2,8 +2,11 @@ module github.com/macro-markets/whatsqr
 
 go 1.26.0
 
+toolchain go1.26.8
+
 require (
 	go.mau.fi/whatsmeow v0.0.0-20261005195255-6bb48c0f1ff0
+	golang.org/x/image v0.45.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.59.0
 )

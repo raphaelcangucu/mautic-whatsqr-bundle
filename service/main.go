@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/macro-markets/whatsqr/api"
+	"github.com/macro-markets/whatsqr/media"
 	"github.com/macro-markets/whatsqr/session"
 	"github.com/macro-markets/whatsqr/webhook"
 )
@@ -67,8 +68,12 @@ func run() error {
 	})
 	defer sender.Close()
 
+	attachments, err := media.New(cfg.StorePath + ".media")
+	if err != nil {
+		return fmt.Errorf("opening private media store: %w", err)
+	}
 	manager := session.NewManager(
-		dialer(ctx, dir, store),
+		session.WithMediaStore(dialer(ctx, dir, store), attachments),
 		session.Options{Notify: notifier(dir, sender)},
 	)
 	defer manager.Shutdown()
@@ -84,6 +89,7 @@ func run() error {
 		Credentials: store,
 		Directory:   dir,
 		HasSecret:   cfg.HasSecret,
+		Media:       attachments,
 	})
 
 	listener, err := api.Listen(cfg.Listen)

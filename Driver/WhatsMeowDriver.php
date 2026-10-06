@@ -23,8 +23,9 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
  * Toda a traducao mora aqui -- o dialeto do servico entra, SessionState e SentMessage
  * saem, e nenhum "status" cru atravessa para a tela ou para a fila.
  */
-final class WhatsMeowDriver implements SessionDriverInterface
+final class WhatsMeowDriver implements SessionDriverInterface, ProfileImageDriverInterface, AttachmentDriverInterface
 {
+    use AttachmentResponseTrait;
     /**
      * Teto de espera de uma chamada. Existe por causa do envio: sem teto, o servico
      * pendurado segura a requisicao HTTP do atendente ate o PHP desistir, e a tela fica
@@ -40,6 +41,31 @@ final class WhatsMeowDriver implements SessionDriverInterface
         private readonly string $token,
     ) {
         $this->baseUri = rtrim($baseUri, '/');
+    }
+
+    public function profileImage(MetaAsset $asset, string $recipient): ?\MauticPlugin\MauticWhatsQrBundle\Domain\ProfileImage
+    {
+        $url = $this->baseUri.'/sessions/'.rawurlencode($this->sessionId($asset)).'/avatar?'.http_build_query(['to' => $recipient]);
+        $response = $this->http->request('GET', $url, [
+            'auth_bearer' => $this->token, 'timeout' => 9, 'max_duration' => 10,
+            'max_redirects' => 0, 'buffer' => false,
+        ]);
+        try {
+            if (200 !== $response->getStatusCode()) { return null; }
+            $contents = '';
+            foreach ($this->http->stream($response, 9) as $chunk) {
+                if ($chunk->isTimeout()) { return null; }
+                $contents .= $chunk->getContent();
+                if (strlen($contents) > 262144) { return null; }
+            }
+            $info = @getimagesizefromstring($contents);
+            $mime = is_array($info) ? ($info['mime'] ?? '') : '';
+            if (!in_array($mime, ['image/jpeg', 'image/png', 'image/webp'], true) || $info[0] > 2048 || $info[1] > 2048) { return null; }
+
+            return new \MauticPlugin\MauticWhatsQrBundle\Domain\ProfileImage($contents, $mime);
+        } finally {
+            $response->cancel();
+        }
     }
 
     public function openSession(MetaAsset $asset): SessionState

@@ -21,6 +21,7 @@ return function (ContainerConfigurator $configurator): void {
     // nao compila derruba o painel inteiro do Mautic, nao so este plugin. A lista do core nao
     // cobre Domain porque nem todo plugin tem um. Tests pela mesma razao: nao e codigo de runtime.
     $excludes[] = 'Domain';
+    $excludes[] = 'Inbox'; // Optional Inbox integration must not load when that plugin is absent.
     // O adaptador tambem nao e servico: quem o constroi e a fabrica, um por numero, com o
     // endereco e o token daquele numero. Registra-lo aqui pediria ao autowire para adivinhar
     // duas strings — e, pior, criaria um adaptador unico compartilhado, que falaria pelo
@@ -39,6 +40,15 @@ return function (ContainerConfigurator $configurator): void {
     // "No WhatsApp transport is registered for asset type", que e erro de configuracao
     // aparecendo como falha de envio, com um cliente do outro lado esperando resposta.
     // O tipo vem da enum, e nao da string: o dia em que o valor mudar la, isto acompanha.
+    if (interface_exists(\MauticPlugin\MauticInboxBundle\Contract\ParticipantAvatarProviderInterface::class)) {
+        $services->set(\MauticPlugin\MauticWhatsQrBundle\Inbox\ParticipantAvatarProvider::class)
+            ->tag('mautic.inbox.participant_avatar');
+    }
+    if (interface_exists(\MauticPlugin\MauticInboxBundle\Contract\AttachmentProviderInterface::class)) {
+        $services->set(\MauticPlugin\MauticWhatsQrBundle\Inbox\AttachmentProvider::class)
+            ->tag('mautic.inbox.attachment');
+    }
+
     $services->set(QrTransport::class)
         ->tag(TransportResolver::TAG, ['asset_type' => AssetType::WhatsAppQrSession->value]);
 };

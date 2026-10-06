@@ -69,11 +69,12 @@ type Event struct {
 
 // Inbound e uma mensagem que chegou, ja sem o formato da biblioteca.
 type Inbound struct {
-	ID        string
-	From      string // JID de quem mandou
-	Name      string // Display name supplied by WhatsApp
-	Text      string
-	Timestamp time.Time
+	ID         string
+	From       string // JID de quem mandou
+	Name       string // Display name supplied by WhatsApp
+	Text       string
+	Timestamp  time.Time
+	Attachment *Attachment
 	// Unsupported marca o que chegou e nao vira texto -- midia, sobretudo.
 	// O desenho manda mostrar na caixa que veio alguma coisa e nao deu de
 	// ler: o cliente manda a foto do boleto e escreve "e esse aqui", e sem

@@ -8,7 +8,7 @@ use MauticPlugin\MauticWhatsQrBundle\Controller\WebhookController;
 return [
     'name'        => 'Mautic WhatsApp QR',
     'description' => 'Numero de WhatsApp pareado por QR Code, atendido pela mesma caixa dos canais oficiais da Meta.',
-    'version'     => '0.2.1',
+    'version'     => '0.3.0',
     'author'      => 'Raphael Cangucu',
     'parameters'  => [
         // Padrao para numero novo, e so isso: o motor de cada numero mora no asset dele.
@@ -20,6 +20,16 @@ return [
     ],
     'routes'      => [
         'main' => [
+            'mautic_whatsqr_media' => [
+                'path' => '/whatsqr/media/{messageId}',
+                'controller' => \MauticPlugin\MauticWhatsQrBundle\Controller\MediaController::class.'::show',
+                'method' => 'GET', 'requirements' => ['messageId' => '\\d+'],
+            ],
+            'mautic_whatsqr_avatar' => [
+                'path' => '/whatsqr/avatars/{conversationId}',
+                'controller' => \MauticPlugin\MauticWhatsQrBundle\Controller\AvatarController::class.'::show',
+                'method' => 'GET', 'requirements' => ['conversationId' => '\\d+'],
+            ],
             'mautic_whatsqr_connections' => [
                 'path'       => '/whatsqr/connections',
                 'controller' => ConnectionsController::class.'::index',

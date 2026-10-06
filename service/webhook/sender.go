@@ -443,12 +443,13 @@ type payload struct {
 }
 
 type inboundBody struct {
-	ID          string `json:"id"`
-	From        string `json:"from"`
-	Name        string `json:"name,omitempty"`
-	Text        string `json:"text"`
-	Timestamp   int64  `json:"timestamp"`
-	Unsupported bool   `json:"unsupported"`
+	ID          string              `json:"id"`
+	From        string              `json:"from"`
+	Name        string              `json:"name,omitempty"`
+	Text        string              `json:"text"`
+	Timestamp   int64               `json:"timestamp"`
+	Unsupported bool                `json:"unsupported"`
+	Attachment  *session.Attachment `json:"attachment,omitempty"`
 }
 
 type statusBody struct {
@@ -486,6 +487,7 @@ func newEvent(n session.Notice) (*event, error) {
 			Text:        n.Message.Text,
 			Timestamp:   n.Message.Timestamp.Unix(),
 			Unsupported: n.Message.Unsupported,
+			Attachment:  n.Message.Attachment,
 		}
 	case session.NoticeStatus:
 		if n.Delivery == nil {
