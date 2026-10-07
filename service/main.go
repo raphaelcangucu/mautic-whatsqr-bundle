@@ -42,6 +42,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	secrets, err := loadSessionSecrets(cfg.StorePath+".sessions.json", cfg.Sessions)
+	if err != nil {
+		return fmt.Errorf("loading mobile session registry: %w", err)
+	}
 
 	// O sinal vira cancelamento antes de qualquer coisa abrir: um Ctrl-C no
 	// meio da religacao das sessoes tem que parar a religacao, e nao
@@ -62,9 +66,14 @@ func run() error {
 	}
 	defer dir.Close()
 
+	history, err := webhook.NewHistoryOutbox(cfg.StorePath + ".history")
+	if err != nil {
+		return fmt.Errorf("opening private history outbox: %w", err)
+	}
 	sender := webhook.New(webhook.Options{
-		URL:    cfg.WebhookURL,
-		Secret: cfg.Secret,
+		History: history,
+		URL:     cfg.WebhookURL,
+		Secret:  secrets.Secret,
 	})
 	defer sender.Close()
 
@@ -84,12 +93,13 @@ func run() error {
 	restore(ctx, manager, store, dir)
 
 	server := api.NewServer(api.Options{
-		Manager:     manager,
-		Token:       cfg.Token,
-		Credentials: store,
-		Directory:   dir,
-		HasSecret:   cfg.HasSecret,
-		Media:       attachments,
+		Manager:         manager,
+		Token:           cfg.Token,
+		Credentials:     store,
+		Directory:       dir,
+		HasSecret:       secrets.HasSecret,
+		RegisterSession: secrets.Register,
+		Media:           attachments,
 	})
 
 	listener, err := api.Listen(cfg.Listen)

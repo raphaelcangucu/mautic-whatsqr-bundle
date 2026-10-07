@@ -91,4 +91,14 @@ final class TranslationsTest extends TestCase
         sort($en);
         self::assertSame($pt, $en);
     }
+
+    public function testConnectionFormErrorsExistInTheValidatorDomain(): void
+    {
+        foreach (['pt_BR', 'en_US'] as $locale) {
+            $validators = parse_ini_file(__DIR__.'/../../Translations/'.$locale.'/validators.ini', false, INI_SCANNER_RAW);
+            foreach (['mautic.whatsqr.form.name.invalid', 'mautic.whatsqr.form.source.unavailable'] as $key) {
+                self::assertSame($this->catalogue($locale)[$key], $validators[$key]);
+            }
+        }
+    }
 }

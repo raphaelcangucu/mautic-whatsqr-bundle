@@ -4,12 +4,12 @@ Plugin de conexão de números WhatsApp por QR para o Inbox multicanal do Mautic
 O serviço Go mantém a sessão com Whatsmeow; o plugin autentica os webhooks e usa
 as conversas, contatos, consentimentos e fila do conector Meta.
 
-Versão publicada: **0.3.0**, incluindo o plugin PHP e o serviço Go.
+Versão publicada: **0.3.2**, incluindo o plugin PHP e o serviço Go.
 
 ## Dependências
 
 - Mautic 7, PHP 8.2 ou superior e [MauticMetaBundle 0.14.2](https://github.com/raphaelcangucu/mautic-meta-bundle/releases/tag/v0.14.2) ou compatível.
-- [MauticInboxBundle 1.5.0](https://github.com/raphaelcangucu/mautic-inbox-bundle/releases/tag/v1.5.0) ou compatível, para atendimento.
+- [MauticInboxBundle 1.5.2](https://github.com/raphaelcangucu/mautic-inbox-bundle/releases/tag/v1.5.2) ou compatível, para atendimento.
 - ClamAV com daemon `clamd`, socket Unix privado e assinaturas atualizadas por `freshclam` para liberar anexos.
 - Go 1.26 para compilar, com preferência pelo patch 1.26.8 definido em `service/go.mod`; binário estático Linux/amd64 em produção.
 - Whatsmeow fixado em `v0.0.0-20261005195255-6bb48c0f1ff0`.
@@ -18,7 +18,7 @@ Versão publicada: **0.3.0**, incluindo o plugin PHP e o serviço Go.
 
 ## Funcionamento
 
-1. Criar uma conexão interna Meta e um asset `whatsapp_qr_session`. O ID externo do
+1. Na configuração inicial, criar uma conexão interna Meta e um asset `whatsapp_qr_session`. O ID externo do
    asset deve coincidir com a chave da sessão no serviço, por exemplo `suporte`.
 2. Configurar o endereço local, token e segredo de webhook no asset, criptografados
    pelo CredentialVault do conector. Nenhum token entra na página ou no QR.
@@ -32,6 +32,27 @@ A navegação GET não abre nem apaga sessões. Iniciar e renovar usam POST, per
 de edição e CSRF. Renovar não apaga credenciais de contas conectadas ou em
 reconexão. Número e JID só são registrados após o evento real de pareamento.
 
+## Gerenciar conexões pelo painel
+
+Em `/s/whatsqr/connections`, **Editar nome** muda somente o nome interno da conta;
+o ID da sessão, os segredos, o telefone, as conversas e o pareamento são preservados.
+**Nova conexão** solicita um nome e o servidor de uma conexão QR já configurada.
+A nova conta recebe um identificador aleatório e um segredo de webhook exclusivo,
+criptografado pelo CredentialVault. Ela não herda o número nem a sessão do celular anterior.
+
+Criar o cadastro redireciona para o pareamento. Somente **Gerar QR**, via POST com
+CSRF e permissão de edição, registra a nova sessão no serviço e inicia o pareamento.
+O serviço deve incluir `POST /sessions/{id}/configuration`: o registro é autenticado,
+limitado e aditivo; nunca substitui segredos existentes. Registros adicionais ficam
+em `<store_path>.sessions.json`, privado (0600), com gravação atômica. O serviço já
+pareado não precisa ser reiniciado para adicionar outra conta. Atualize plugin e
+serviço juntos ao habilitar esse fluxo pela primeira vez.
+
+As ações exigem `meta:connections:create` / `meta:connections:edit`; o cadastro
+continua usando `MetaAsset`, sem novas tabelas ou migrações. Formulários validam
+CSRF, nome (1–191 caracteres) e servidor disponível. Sem servidor QR configurado,
+o formulário informa a configuração necessária e não permite salvar.
+
 ## Serviço
 
 Compilar em `service/`:
@@ -40,7 +61,7 @@ Compilar em `service/`:
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o whatsqr .
 ```
 
-O binário Linux/amd64 e seu checksum estão disponíveis nos assets da [release v0.3.0](https://github.com/raphaelcangucu/mautic-whatsqr-bundle/releases/tag/v0.3.0). Verifique `SHA256SUMS` antes de substituir o serviço.
+O pacote do plugin, o binário Linux/amd64 e seus checksums estão disponíveis nos assets da [release v0.3.2](https://github.com/raphaelcangucu/mautic-whatsqr-bundle/releases/tag/v0.3.2). Verifique `SHA256SUMS` antes de instalar ou substituir o serviço. As alterações estão nos PRs [#1](https://github.com/raphaelcangucu/mautic-whatsqr-bundle/pull/1) (gestão de conexões) e [#2](https://github.com/raphaelcangucu/mautic-whatsqr-bundle/pull/2) (sincronização privada).
 
 Executar com `whatsqr -config /caminho/privado/whatsqr.json`, como serviço systemd.
 A configuração contém `listen`, `token`, `webhook_url`, `store_path`, `log_level`
@@ -52,7 +73,7 @@ O webhook público é `/whatsqr/webhook`. Ele exige `X-WhatsQr-Key`, timestamp e
 A sessão assinada deve coincidir com a sessão do evento. Eventos são deduplicados
 por conta e ID de mensagem.
 
-API local autenticada: `GET /health`, `POST /sessions`, `GET /sessions/{id}/qr`,
+API local autenticada: `GET /health`, `POST /sessions/{id}/configuration` (registro aditivo), `POST /sessions`, `GET /sessions/{id}/qr`,
 `GET /sessions/{id}/events` (SSE), `POST /sessions/{id}/messages` e `DELETE /sessions/{id}`. DELETE apaga credenciais;
 não deve ser usado para resolver indiscriminadamente problemas de rede.
 
@@ -159,3 +180,20 @@ não publique credenciais no repositório.
 Envios novos por telefone consultam o identificador canônico no WhatsApp antes
 de enviar. Números brasileiros com o nono dígito aceitam a variante antiga de oito
 dígitos somente após a confirmação do próprio WhatsApp.
+
+
+### Sincronização do celular e de outros dispositivos
+
+Mensagens privadas enviadas no telefone ou em outro aparelho vinculado são espelhadas no Inbox como **saída**. O destinatário é a conversa de destino, inclusive quando o WhatsApp usa LID com endereço de telefone alternativo; o nome da própria conta não substitui o nome do cliente. Grupos, listas de transmissão, status e newsletters são excluídos no serviço e no recebimento PHP.
+
+Envios feitos pelo Inbox continuam usando o transporte existente. Seus IDs são registrados antes do envio para suprimir ecos durante a gravação da resposta HTTP. Reentregas são deduplicadas por conta e ID original. A sincronização não envia a mensagem novamente, não registra opt-in/opt-out em nome do cliente e não dispara IA, campanhas ou adaptadores `message.received`.
+
+Na página da conexão, **Sincronizar histórico** solicita ao telefone o histórico que o WhatsApp permite compartilhar. É um POST com permissão de edição e CSRF, encaminhado ao endpoint autenticado e local `POST /sessions/{id}/history`. A resposta `202 requested` confirma a solicitação, não a conclusão. Mantenha o telefone conectado à internet com o WhatsApp aberto. O protocolo e o telefone podem limitar ou recusar o histórico; uma solicitação não garante acesso a todas as mensagens existentes no aparelho.
+
+A solicitação também usa o caminho `BuildHistorySyncRequest` do Whatsmeow para até 32 conversas privadas já conhecidas, com 50 mensagens anteriores ao último ID real de cada conversa. As âncoras vêm de uma única consulta limitada por conta, sem fabricar IDs nem consultar a base dentro de um loop. A busca geral é adicional e depende do suporte do telefone; ela não é prova de que todos os chats do aparelho foram descobertos. Respostas e importações são acompanhadas por contagens nos logs, sem registrar o texto das mensagens.
+
+Eventos `HistorySync` importam ambas as direções com as datas originais, reconhecem mensagens já registradas e preservam responsáveis, situação e contagem de não lidas das conversas existentes. Conversas antigas novas são criadas sem exigir resposta nem gerar sons, push ou automação. As referências de anexos passam pelas mesmas regras de tamanho, MIME, hash, acesso e armazenamento privado; mídia de visualização única continua excluída.
+
+O histórico usa uma fila persistente separada em `<store_path>.history`, diretório `0700` e arquivos `0600`, sem tokens ou chaves de mídia. A fila só remove um item após confirmação do Mautic, sobrevive a reinícios e prioriza mensagens novas. O processamento é serial e limitado para reduzir carga no Mautic. Limites: 128 MiB de fila, 128 KiB por evento, solicitação de até 365 dias/64 MiB, e intervalo mínimo de cinco minutos entre solicitações. Falhas de entrega preservam o item para nova tentativa. Mensagens fora do intervalo ou não disponibilizadas pelo telefone não são apresentadas como recuperadas.
+
+A integração opcional com `MauticInboxBundle` cria o estado silencioso das conversas importadas. Nenhum schema novo é necessário: são reutilizadas as entidades de conversa, mensagem e estado existentes. Os testes de regressão são locais e usam repositórios/conexões simulados; os testes Go usam diretórios temporários, nunca a base ou o armazenamento pareado de produção.

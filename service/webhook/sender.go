@@ -5,13 +5,8 @@
 // aquela assinatura, entao o servico liga os dois passando o metodo. Dali
 // saem os tres tipos que o Mautic espera -- message, status e session.
 //
-// O que este pacote deliberadamente NAO e: uma fila. O buffer e de memoria
-// e tem fim. O Mautic ja tem fila duravel, com claim atomico, recuo e
-// dedupe por chave; construir uma segunda aqui, com maquina de estados e
-// testes proprios, seria duplicar infraestrutura que existe -- numa lingua
-// que, como o desenho admite, ninguem naquela casa le. Se o Mautic ficar
-// fora do ar mais tempo que o buffer, o que se perde e um evento de entrada
-// que o proprio WhatsApp ainda tem.
+// Live events use a bounded memory buffer. History uses a separate private
+// durable outbox, so importing many old chats cannot evict current messages.
 package webhook
 
 import (
@@ -70,6 +65,8 @@ const (
 // Options sao os ajustes do remetente. Todos tem padrao, menos URL e
 // Secret, que so quem monta o servico sabe.
 type Options struct {
+	// History is a private durable outbox. Live messages always have priority.
+	History *HistoryOutbox
 	// URL e a rota do webhook no Mautic.
 	URL string
 
@@ -207,6 +204,21 @@ func (s *Sender) Notify(n session.Notice) {
 		s.opts.Logf("webhook: aviso da sessao %s descartado: %v", n.SessionID, err)
 		return
 	}
+	if n.Message != nil && n.Message.Historical {
+		if s.opts.History == nil {
+			s.opts.Logf("webhook: history unavailable for session=%s", n.SessionID)
+			return
+		}
+		if err := s.opts.History.enqueue(ev); err != nil {
+			s.opts.Logf("webhook: history enqueue failed session=%s: %v", n.SessionID, err)
+			return
+		}
+		select {
+		case s.wake <- struct{}{}:
+		default:
+		}
+		return
+	}
 	s.push(ev)
 }
 
@@ -270,6 +282,9 @@ func (s *Sender) take() *event {
 // run e a goroutine dona da entrega.
 func (s *Sender) run() {
 	defer close(s.done)
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	var retryHistory time.Time
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -278,8 +293,27 @@ func (s *Sender) run() {
 		}
 
 		ev := s.take()
+		if ev == nil && s.opts.History != nil && !time.Now().Before(retryHistory) {
+			history, err := s.opts.History.peek()
+			if err != nil {
+				s.opts.Logf("webhook: history read failed: %v", err)
+				retryHistory = time.Now().Add(30 * time.Second)
+			}
+			if history != nil {
+				if s.deliver(history) {
+					if err = s.opts.History.complete(history); err != nil {
+						s.opts.Logf("webhook: history acknowledgement failed: %v", err)
+					}
+					retryHistory = time.Now().Add(250 * time.Millisecond)
+				} else {
+					retryHistory = time.Now().Add(30 * time.Second)
+				}
+				continue
+			}
+		}
 		if ev == nil {
 			select {
+			case <-ticker.C:
 			case <-s.wake:
 				// Aviso podendo ser falso: quem avisou pode ter sido um
 				// push cujo evento ja foi levado na volta anterior. Custa
@@ -296,11 +330,11 @@ func (s *Sender) run() {
 
 // deliver tenta ate o 200, ate a recusa que nao muda, ou ate acabar a
 // paciencia.
-func (s *Sender) deliver(ev *event) {
+func (s *Sender) deliver(ev *event) bool {
 	secret, ok := s.opts.Secret(ev.sessionID)
 	if !ok || secret == "" {
 		s.opts.Logf("webhook: evento %s descartado: a sessao %s nao tem segredo, e assinar sem segredo e um POST que o Mautic recusa", ev.id, ev.sessionID)
-		return
+		return false
 	}
 
 	backoff := s.opts.Backoff
@@ -309,23 +343,23 @@ func (s *Sender) deliver(ev *event) {
 		switch {
 		case err == nil && status >= 200 && status < 300:
 			s.opts.Logf("webhook: delivered kind=%s session=%s status=%d", ev.kind, ev.sessionID, status)
-			return
+			return true
 		case err == nil && !retryable(status):
 			// Tentar de novo um 401 para sempre nao e a mesma coisa que
 			// tentar de novo um 503: o 401 nao melhora esperando, e
 			// insistir nele gasta as cinco tentativas e depois o buffer --
 			// os eventos bons atras dele e que pagariam a conta.
 			s.opts.Logf("webhook: evento %s da sessao %s descartado: o Mautic respondeu %d, que nao muda com retentativa", ev.id, ev.sessionID, status)
-			return
+			return false
 		}
 		if attempt >= s.opts.Attempts {
 			s.opts.Logf("webhook: evento %s da sessao %s: desistiu depois de %d tentativas (ultimo resultado: %s)",
 				ev.id, ev.sessionID, attempt, outcome(status, err))
-			return
+			return false
 		}
 		if !s.opts.Wait(s.ctx, backoff) {
 			// Fechando: nao adianta recuar para tentar de novo depois.
-			return
+			return false
 		}
 		backoff *= 2
 	}
@@ -445,6 +479,8 @@ type payload struct {
 type inboundBody struct {
 	ID          string              `json:"id"`
 	From        string              `json:"from"`
+	FromMe      bool                `json:"from_me,omitempty"`
+	Historical  bool                `json:"historical,omitempty"`
 	Name        string              `json:"name,omitempty"`
 	Text        string              `json:"text"`
 	Timestamp   int64               `json:"timestamp"`
@@ -483,6 +519,8 @@ func newEvent(n session.Notice) (*event, error) {
 		body.Message = &inboundBody{
 			ID:          n.Message.ID,
 			From:        n.Message.From,
+			FromMe:      n.Message.FromMe,
+			Historical:  n.Message.Historical,
 			Name:        n.Message.Name,
 			Text:        n.Message.Text,
 			Timestamp:   n.Message.Timestamp.Unix(),
@@ -531,14 +569,14 @@ func eventID(n session.Notice) string {
 			// tambem para a reentrega que o whatsmeow faz na volta de uma
 			// queda -- a mesma mensagem chegando de novo nao vira uma
 			// segunda bolha na conversa.
-			return "msg:" + n.Message.ID
+			return "msg:" + n.SessionID + ":" + n.Message.ID
 		}
 	case session.NoticeStatus:
 		if n.Delivery != nil && n.Delivery.ID != "" {
 			// O andar da entrega entra na chave porque "entregue" e "lido"
 			// da mesma mensagem sao dois eventos: so o id os faria colidir,
 			// e o segundo sumiria no dedupe.
-			return "status:" + n.Delivery.ID + ":" + string(n.Delivery.Status)
+			return "status:" + n.SessionID + ":" + n.Delivery.ID + ":" + string(n.Delivery.Status)
 		}
 	}
 	// session nao tem nada estavel para derivar -- e nem poderia ter. Uma

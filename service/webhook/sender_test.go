@@ -264,6 +264,14 @@ func messageNotice(sessionID, waID, text string) session.Notice {
 	}
 }
 
+func TestMessageEventIdsAreScopedToEachPairedAccount(t *testing.T) {
+	first := eventID(messageNotice("account-a", "shared-wa-id", "test"))
+	second := eventID(messageNotice("account-b", "shared-wa-id", "test"))
+	if first == second {
+		t.Fatal("message from a second paired account would be discarded")
+	}
+}
+
 func statusNotice(sessionID, waID string, st session.DeliveryStatus) session.Notice {
 	return session.Notice{
 		SessionID: sessionID,
@@ -425,7 +433,7 @@ func TestItGivesUpAndDropsTheOldestWhenTheBufferIsFull(t *testing.T) {
 		t.Fatalf("descartes registrados = %d, queria 5:\n%s", len(dropped), strings.Join(b.logs.all(), "\n"))
 	}
 	for i := 1; i <= 5; i++ {
-		id := "msg:e" + strconv.Itoa(i)
+		id := "msg:s1:e" + strconv.Itoa(i)
 		if len(b.logs.matching(id)) == 0 {
 			t.Fatalf("o descarte de %s nao foi registrado -- descarte em silencio e mensagem perdida sem ninguem saber", id)
 		}

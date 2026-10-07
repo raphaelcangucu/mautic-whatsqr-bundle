@@ -70,7 +70,9 @@ type Event struct {
 // Inbound e uma mensagem que chegou, ja sem o formato da biblioteca.
 type Inbound struct {
 	ID         string
-	From       string // JID de quem mandou
+	From       string // Conversation peer JID (recipient when FromMe is true)
+	FromMe     bool   // Mirrored message sent on the phone or another linked device
+	Historical bool   // Imported history: no customer notifications or automation
 	Name       string // Display name supplied by WhatsApp
 	Text       string
 	Timestamp  time.Time

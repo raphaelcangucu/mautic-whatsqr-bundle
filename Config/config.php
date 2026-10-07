@@ -8,7 +8,7 @@ use MauticPlugin\MauticWhatsQrBundle\Controller\WebhookController;
 return [
     'name'        => 'Mautic WhatsApp QR',
     'description' => 'Numero de WhatsApp pareado por QR Code, atendido pela mesma caixa dos canais oficiais da Meta.',
-    'version'     => '0.3.0',
+    'version'     => '0.3.2',
     'author'      => 'Raphael Cangucu',
     'parameters'  => [
         // Padrao para numero novo, e so isso: o motor de cada numero mora no asset dele.
@@ -39,10 +39,25 @@ return [
                 'controller'   => ConnectionsController::class.'::pair',
                 'requirements' => ['assetId' => '\\d+'],
             ],
+            'mautic_whatsqr_connection_new' => [
+                'path' => '/whatsqr/connections/new',
+                'controller' => ConnectionsController::class.'::new',
+                'method' => ['GET', 'POST'],
+            ],
+            'mautic_whatsqr_connection_edit' => [
+                'path' => '/whatsqr/connections/{assetId}/edit',
+                'controller' => ConnectionsController::class.'::edit',
+                'method' => ['GET', 'POST'], 'requirements' => ['assetId' => '\\d+'],
+            ],
             'mautic_whatsqr_pair_start' => [
                 'path' => '/whatsqr/connections/{assetId}/pair/start',
                 'controller' => ConnectionsController::class.'::start',
                 'method' => 'POST', 'requirements' => ['assetId' => '\d+'],
+            ],
+            'mautic_whatsqr_sync_history' => [
+                'path' => '/whatsqr/connections/{assetId}/history',
+                'controller' => ConnectionsController::class.'::syncHistory',
+                'method' => 'POST', 'requirements' => ['assetId' => '\\d+'],
             ],
             'mautic_whatsqr_pair_status' => [
                 'path' => '/whatsqr/connections/{assetId}/pair/status',

@@ -65,6 +65,7 @@ final class InboundIngestor
         private readonly WebhookAdapterDispatcher $adapters,
         private readonly SessionStateRecorder $sessions,
         private readonly LoggerInterface $logger,
+        private readonly ?HistoryRecorder $history = null,
     ) {
     }
 
@@ -107,6 +108,8 @@ final class InboundIngestor
         }
 
         $inbound = is_array($payload['message'] ?? null) ? $payload['message'] : [];
+        $fromMe = true === ($inbound['from_me'] ?? false);
+        $historical = true === ($inbound['historical'] ?? false);
         $externalId = trim((string) ($inbound['id'] ?? ''));
         if ('' === $externalId) {
             // Sem id nao ha como saber se esta mensagem ja entrou. Gravar assim mesmo
@@ -119,7 +122,11 @@ final class InboundIngestor
 
         // Dedupe por numero, e nao global: dois numeros podem receber o mesmo id de um
         // encaminhamento, e a segunda conversa e de outro cliente.
-        if ($this->messages->findOneBy(['asset' => $asset, 'externalId' => $externalId]) instanceof MetaMessage) {
+        // Imported/phone messages need an account-specific key: the same WA ID
+        // can appear on both paired accounts, while meta_messages has a global
+        // unique ID. Also recognize legacy raw IDs (including Inbox API sends).
+        $scopedId = 'qr:'.hash('sha256', $asset->getExternalId()."\0".$externalId);
+        if ($this->messages->findOneBy(['asset' => $asset, 'externalId' => [$externalId, $scopedId]]) instanceof MetaMessage) {
             return null;
         }
 
@@ -131,14 +138,28 @@ final class InboundIngestor
             return null;
         }
 
+        // Defense in depth: even a signed payload cannot import groups,
+        // broadcasts, newsletters or unsupported JID namespaces.
+        if (!in_array($jid->server, ['s.whatsapp.net', 'lid'], true)) {
+            return null;
+        }
+
         $recipient = $this->recipient($asset, $jid);
         $resolved = !InboundJid::isUnresolved($recipient);
+        if ($historical && (!is_int($inbound['timestamp'] ?? null) || $inbound['timestamp'] <= 946684800 || $inbound['timestamp'] > time() + 300)) {
+            return null;
+        }
+        if ($historical && null === $this->history) {
+            throw new \RuntimeException('WhatsApp history recorder is unavailable.');
+        }
 
         // Sem telefone nao ha o que casar com contato: a busca do Meta bundle compara
         // digitos com `mobile` e `phone`, e os digitos de um identificador de privacidade
         // casariam com quem tivesse a mesma sequencia por acaso.
-        $contact = $resolved ? $this->contacts->match($asset, $recipient) : null;
-        $identity = $this->identities->registerInteraction($asset, $recipient, null, $contact);
+        $contact = $resolved && !$historical ? $this->contacts->match($asset, $recipient) : null;
+        // A device mirror records what the operator already sent. It is not
+        // customer activity and must not reopen consent or the inbound window.
+        $identity = $fromMe || $historical ? null : $this->identities->registerInteraction($asset, $recipient, null, $contact);
 
         $unsupported = true === ($inbound['unsupported'] ?? false);
         $attachment = AttachmentReference::fromInbound($inbound);
@@ -147,7 +168,7 @@ final class InboundIngestor
             $payload['message'][$attachment->type] = ['id' => $attachment->id, 'filename' => $attachment->filename, 'caption' => (string) ($inbound['text'] ?? ''), 'file_size' => $attachment->size];
         }
         $text = (string) ($inbound['text'] ?? '');
-        $keyword = $unsupported ? null : $this->keywords->match($text);
+        $keyword = $fromMe || $historical || $unsupported ? null : $this->keywords->match($text);
         if ('opt_in' === $keyword) {
             $this->identities->optIn($identity, 'whatsapp_keyword');
         }
@@ -159,35 +180,57 @@ final class InboundIngestor
         }
 
         $displayName = trim((string) ($inbound['name'] ?? ''));
-        if ('' !== $displayName) { $payload['contact']['profile']['name'] = mb_substr($displayName, 0, 150); }
+        if ((!$fromMe || $historical) && '' !== $displayName) { $payload['contact']['profile']['name'] = mb_substr($displayName, 0, 150); }
 
         $payload['whatsqr'] = [
             'jid' => $jid->raw,
             'phone_resolved' => $resolved,
             'reply_blocked_reason' => $resolved ? null : self::UNRESOLVED_PHONE_REASON,
             'consent_keyword' => $keyword,
+            'sent_from_device' => $fromMe,
+            'historical' => $historical,
         ];
 
         $message = (new MetaMessage())
             ->setAsset($asset)
-            ->setExternalId($externalId)
+            ->setExternalId($fromMe || $historical ? $scopedId : $externalId)
             // `whatsapp`, e nao um canal proprio: a caixa, a busca por conversa e a janela
             // de resposta sao as mesmas dos numeros oficiais. Canal so deste plugin faria
             // a conversa existir num lugar que nenhuma tela consulta.
             ->setChannel('whatsapp')
-            ->setDirection('inbound')
+            ->setDirection($fromMe ? 'outbound' : 'inbound')
             // QR attachments use the private service, never the official Graph transport.
             ->setMessageType($attachment?->type ?? ($unsupported ? 'unsupported' : 'text'))
-            ->setContact($identity->getContact())
+            ->setContact($identity?->getContact() ?? $contact)
             ->setRecipient($recipient)
             // O corpo fica como chegou: e o unico registro do que o WhatsApp entregou.
             ->setPayload($payload)
-            ->setStatus('received');
+            ->setStatus($fromMe ? 'sent' : 'received');
+
+        if (($fromMe || $historical) && is_int($inbound['timestamp'] ?? null) && $inbound['timestamp'] > 946684800 && $inbound['timestamp'] <= time() + 300) {
+            $message->setDateAdded((new \DateTimeImmutable())->setTimestamp($inbound['timestamp']));
+        }
+
+        if ($historical) {
+            // SSE incremental reads use the import time; the bubble keeps the
+            // original sent/received date. No private attachment data is copied.
+            $message->setDateModified(new \DateTimeImmutable());
+            $this->history->record($message);
+            return $message;
+        }
 
         $this->entityManager->persist($message);
         $this->entityManager->flush();
 
         $this->conversations->record($message);
+
+        // ConversationManager notifies the Inbox for outbound messages itself.
+        // Do not treat this mirror as an inbound notification or run a bot,
+        // campaign, consent keyword or message.received webhook adapter.
+        if ($fromMe) {
+            $this->history?->recordDeviceReply($message);
+            return $message;
+        }
 
         // O aviso, que e o ponto desta tarefa. Depois de `record()`, nunca antes: sem
         // conversa ligada a caixa desiste no primeiro if, calada.

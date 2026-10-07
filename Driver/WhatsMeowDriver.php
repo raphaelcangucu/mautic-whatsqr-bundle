@@ -23,7 +23,7 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
  * Toda a traducao mora aqui -- o dialeto do servico entra, SessionState e SentMessage
  * saem, e nenhum "status" cru atravessa para a tela ou para a fila.
  */
-final class WhatsMeowDriver implements SessionDriverInterface, ProfileImageDriverInterface, AttachmentDriverInterface
+final class WhatsMeowDriver implements SessionDriverInterface, SessionProvisioningDriverInterface, ProfileImageDriverInterface, AttachmentDriverInterface, HistoryDriverInterface
 {
     use AttachmentResponseTrait;
     /**
@@ -34,6 +34,14 @@ final class WhatsMeowDriver implements SessionDriverInterface, ProfileImageDrive
     private const TIMEOUT_SECONDS = 10;
 
     private string $baseUri;
+
+    public function requestHistory(MetaAsset $asset, array $anchors = []): void
+    {
+        $body = $this->request('POST', '/sessions/'.rawurlencode($this->sessionId($asset)).'/history', ['chats' => $anchors]);
+        if ('requested' !== ($body['status'] ?? null)) {
+            throw new \RuntimeException('The WhatsApp service did not acknowledge the history request.');
+        }
+    }
 
     public function __construct(
         private readonly HttpClientInterface $http,
@@ -73,6 +81,12 @@ final class WhatsMeowDriver implements SessionDriverInterface, ProfileImageDrive
         $body = $this->request('POST', '/sessions', ['id' => $this->sessionId($asset)]);
 
         return $this->toSessionState($this->sessionId($asset), $body);
+    }
+
+    /** Provision the webhook secret before opening a new mobile session. */
+    public function registerSession(MetaAsset $asset, string $secret): void
+    {
+        $this->request('POST', '/sessions/'.rawurlencode($this->sessionId($asset)).'/configuration', ['webhook_secret' => $secret]);
     }
 
     public function pairingQr(MetaAsset $asset): ?string

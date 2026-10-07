@@ -10,12 +10,16 @@ use MauticPlugin\MauticMetaBundle\Domain\AssetType;
 use MauticPlugin\MauticMetaBundle\Entity\MetaAsset;
 use MauticPlugin\MauticMetaBundle\Entity\MetaAssetRepository;
 use MauticPlugin\MauticWhatsQrBundle\Application\ConnectionsOverview;
+use MauticPlugin\MauticWhatsQrBundle\Application\ConnectionManagement;
+use MauticPlugin\MauticWhatsQrBundle\Application\SessionStarter;
 use MauticPlugin\MauticWhatsQrBundle\Application\PairingScreen;
 use MauticPlugin\MauticWhatsQrBundle\Application\ServiceHealth;
 use MauticPlugin\MauticWhatsQrBundle\Domain\PairingView;
 use MauticPlugin\MauticWhatsQrBundle\Domain\SessionState;
 use MauticPlugin\MauticWhatsQrBundle\Driver\SessionDriverFactory;
 use MauticPlugin\MauticWhatsQrBundle\Infrastructure\QrEncoder;
+use MauticPlugin\MauticWhatsQrBundle\Form\Type\QrConnectionType;
+use Symfony\Component\Form\FormError;
 use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -51,6 +55,72 @@ final class ConnectionsController extends CommonController
 
         return $this->view('@MauticWhatsQr/Connections/index.html.twig', [
             'rows' => $overview->rows($health->forAssets($numbers)),
+            'canCreate' => $permissions->isGranted('meta:connections:create'),
+            'canEdit' => $permissions->isGranted('meta:connections:edit'),
+        ]);
+    }
+
+    public function new(Request $request, CorePermissions $permissions, ConnectionManagement $manager): Response
+    {
+        if (!$permissions->isGranted('meta:connections:create')) {
+            throw $this->createAccessDeniedException();
+        }
+        $sources = [];
+        $choices = [];
+        foreach ($manager->sources() as $source) {
+            $sources[$source->getId()] = $source;
+            $choices[$source->getName().' · #'.$source->getId()] = $source->getId();
+        }
+        $form = $this->createForm(QrConnectionType::class, ['source' => array_key_first($sources)], [
+            'sources' => $choices, 'csrf_token_id' => 'whatsqr_connection_new',
+            'action' => $this->generateUrl('mautic_whatsqr_connection_new'),
+        ]);
+        $form->handleRequest($request);
+        if ($form->isSubmitted() && $form->isValid()) {
+            $data = $form->getData();
+            try {
+                $source = $sources[$data['source']] ?? null;
+                if (!$source instanceof MetaAsset) {
+                    throw new \DomainException('mautic.whatsqr.form.source.unavailable');
+                }
+                $asset = $manager->create($data['name'], $source);
+                $this->addFlash('notice', $this->translator->trans('mautic.whatsqr.connection.created'));
+
+                return $this->redirectToRoute('mautic_whatsqr_pair', ['assetId' => $asset->getId()], Response::HTTP_SEE_OTHER);
+            } catch (\InvalidArgumentException|\DomainException) {
+                $form->addError(new FormError($this->translator->trans('mautic.whatsqr.form.save.failed')));
+            }
+        }
+
+        return $this->view('@MauticWhatsQr/Connections/form.html.twig', [
+            'form' => $form->createView(), 'editing' => false, 'hasSources' => [] !== $sources,
+        ]);
+    }
+
+    public function edit(int $assetId, Request $request, CorePermissions $permissions, MetaAssetRepository $assets, ConnectionManagement $manager): Response
+    {
+        if (!$permissions->isGranted('meta:connections:edit')) {
+            throw $this->createAccessDeniedException();
+        }
+        $asset = $this->qrAsset($assets, $assetId);
+        $form = $this->createForm(QrConnectionType::class, ['name' => $asset->getName()], [
+            'editing' => true, 'csrf_token_id' => 'whatsqr_connection_edit_'.$assetId,
+            'action' => $this->generateUrl('mautic_whatsqr_connection_edit', ['assetId' => $assetId]),
+        ]);
+        $form->handleRequest($request);
+        if ($form->isSubmitted() && $form->isValid()) {
+            try {
+                $manager->rename($asset, $form->getData()['name']);
+                $this->addFlash('notice', $this->translator->trans('mautic.whatsqr.connection.updated'));
+
+                return $this->redirectToRoute('mautic_whatsqr_connections', [], Response::HTTP_SEE_OTHER);
+            } catch (\InvalidArgumentException|\DomainException) {
+                $form->addError(new FormError($this->translator->trans('mautic.whatsqr.form.save.failed')));
+            }
+        }
+
+        return $this->view('@MauticWhatsQr/Connections/form.html.twig', [
+            'form' => $form->createView(), 'editing' => true, 'asset' => $asset, 'hasSources' => true,
         ]);
     }
 
@@ -89,6 +159,7 @@ final class ConnectionsController extends CommonController
             'jid' => trim((string) ($asset->getSettings()[SessionState::SETTING_JID] ?? '')) ?: null,
             'startToken' => $tokens->getToken('whatsqr_pair_start_'.$assetId)->getValue(),
             'restartToken' => $tokens->getToken('whatsqr_pair_restart_'.$assetId)->getValue(),
+            'historyToken' => $tokens->getToken('whatsqr_history_'.$assetId)->getValue(),
         ];
         if ($request->hasSession()) { $request->getSession()->save(); }
         $previous = (string) $request->headers->get('Last-Event-ID', $request->query->get('version', ''));
@@ -131,7 +202,7 @@ final class ConnectionsController extends CommonController
         ]);
     }
 
-    public function start(int $assetId, Request $request, CorePermissions $permissions, MetaAssetRepository $assets, SessionDriverFactory $drivers): RedirectResponse
+    public function start(int $assetId, Request $request, CorePermissions $permissions, MetaAssetRepository $assets, SessionStarter $starter): RedirectResponse
     {
         if (!$permissions->isGranted('meta:connections:edit')
             || !$this->isCsrfTokenValid('whatsqr_pair_start_'.$assetId, (string) $request->request->get('_token'))) {
@@ -139,10 +210,27 @@ final class ConnectionsController extends CommonController
         }
         $asset = $this->qrAsset($assets, $assetId);
         try {
-            $driver = $drivers->forAsset($asset);
-            if (!isset($driver->serviceSessions()[$asset->getExternalId()])) { $driver->openSession($asset); }
+            $starter->start($asset);
         } catch (\Throwable $failed) {
-            $this->addFlash('error', $failed->getMessage());
+            $this->addFlash('error', $this->translator->trans('mautic.whatsqr.connection.start.failed'));
+        }
+        return $this->redirectToRoute('mautic_whatsqr_pair', ['assetId' => $assetId], Response::HTTP_SEE_OTHER);
+    }
+
+    public function syncHistory(int $assetId, Request $request, CorePermissions $permissions, MetaAssetRepository $assets, SessionDriverFactory $drivers, \MauticPlugin\MauticWhatsQrBundle\Application\HistoryAnchorProvider $history): RedirectResponse
+    {
+        if (!$permissions->isGranted('meta:connections:edit')
+            || !$this->isCsrfTokenValid('whatsqr_history_'.$assetId, (string) $request->request->get('_token'))) {
+            throw $this->createAccessDeniedException();
+        }
+        $asset = $this->qrAsset($assets, $assetId);
+        try {
+            $driver = $drivers->forAsset($asset);
+            if (!$driver instanceof \MauticPlugin\MauticWhatsQrBundle\Driver\HistoryDriverInterface) { throw new \DomainException('History is unavailable for this driver.'); }
+            $driver->requestHistory($asset, $history->forAsset($asset));
+            $this->addFlash('notice', $this->translator->trans('mautic.whatsqr.history.requested'));
+        } catch (\Throwable) {
+            $this->addFlash('error', $this->translator->trans('mautic.whatsqr.history.failed'));
         }
         return $this->redirectToRoute('mautic_whatsqr_pair', ['assetId' => $assetId], Response::HTTP_SEE_OTHER);
     }

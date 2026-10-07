@@ -76,7 +76,7 @@ func StdoutLogger(level string) waLog.Logger {
 	if level == "" {
 		level = "WARN"
 	}
-	return waLog.Stdout("whatsmeow", level, false)
+	return privateLogger{waLog.Stdout("whatsmeow", level, false)}
 }
 
 // OpenStore abre (e migra) o arquivo de sessoes.
@@ -97,6 +97,12 @@ func OpenStore(ctx context.Context, path string, log waLog.Logger) (*WhatsmeowSt
 	container, err := sqlstore.New(ctx, "sqlite", address, log)
 	if err != nil {
 		return nil, fmt.Errorf("session: abrindo o store: %w", err)
+	}
+	// One read at startup: subsequent LID lookups during history import are
+	// served by Whatsmeow's cache, never database queries inside a message loop.
+	if err = container.LIDMap.FillCache(ctx); err != nil {
+		_ = container.Close()
+		return nil, fmt.Errorf("session: loading peer mapping cache: %w", err)
 	}
 	return &WhatsmeowStore{container: container, log: log}, nil
 }
@@ -242,6 +248,7 @@ func (s *WhatsmeowStore) Close() error { return s.container.Close() }
 
 // whatsmeowClient implementa Client com a biblioteca de verdade.
 type whatsmeowClient struct {
+	ownSends     outgoingEchoes
 	cli          *whatsmeow.Client
 	mediaStore   *media.Store
 	mediaSession string
@@ -259,8 +266,9 @@ type whatsmeowClient struct {
 	// abriu -- e sem alguem para fecha-la sobraria uma goroutine por sessao.
 	fecharJanela context.CancelFunc
 
-	mu sync.Mutex
-	qr string
+	mu               sync.Mutex
+	historyRequested time.Time
+	qr               string
 	// jid e copia nossa, e nao uma leitura de cli.Store.ID a cada chamada:
 	// esse campo e escrito pelo whatsmeow quando o pareamento fecha,
 	// enquanto o gerente pergunta o chip de outra goroutine. Guardar aqui
@@ -450,7 +458,11 @@ func (c *whatsmeowClient) SendText(ctx context.Context, to, text string) (string
 			return "", err
 		}
 	}
-	resp, err := c.cli.SendMessage(ctx, dest, &waE2E.Message{Conversation: proto.String(text)})
+	// Register before sending: the device mirror can arrive before the HTTP
+	// response lets Mautic persist the external ID. The Inbox already owns this send.
+	id := c.cli.GenerateMessageID()
+	c.ownSends.remember(string(id), time.Now())
+	resp, err := c.cli.SendMessage(ctx, dest, &waE2E.Message{Conversation: proto.String(text)}, whatsmeow.SendRequestExtra{ID: id})
 	if err != nil {
 		return "", err
 	}
@@ -592,12 +604,58 @@ func (c *whatsmeowClient) translate(raw any) {
 		c.emit(Event{Kind: EventFailed, Reason: fmt.Sprintf("%s: %s", evt.Reason, evt.Message)})
 
 	case *events.Message:
+		if response := evt.Message.GetProtocolMessage().GetPeerDataOperationRequestResponseMessage(); response != nil {
+			for _, result := range response.GetPeerDataOperationResult() {
+				if full := result.GetFullHistorySyncOnDemandRequestResponse(); full != nil {
+					c.logConnection("History full request response (code=%s)", full.GetResponseCode().String())
+				}
+			}
+		}
 		c.logConnection("Message event (from_me=%t, group=%t)", evt.Info.IsFromMe, evt.Info.IsGroup)
+		if evt.Info.IsFromMe && c.ownSends.contains(evt.Info.ID, time.Now()) {
+			return
+		}
+		peer := evt.Info.Sender
+		if evt.Info.IsFromMe {
+			peer = evt.Info.Chat
+		}
+		if peer.Server == types.HiddenUserServer {
+			phone, _ := c.cli.Store.LIDs.GetPNForLID(context.Background(), peer.ToNonAD())
+			if phone.Server == types.DefaultUserServer {
+				if evt.Info.IsFromMe {
+					evt.Info.RecipientAlt = phone
+				} else {
+					evt.Info.SenderAlt = phone
+				}
+			}
+		}
 		if msg := translateMessage(evt); msg != nil {
 			c.captureMedia(evt, msg)
-			c.logConnection("Private inbound accepted (unsupported=%t)", msg.Unsupported)
+			c.logConnection("Private message accepted (from_me=%t, unsupported=%t)", msg.FromMe, msg.Unsupported)
 			c.emit(Event{Kind: EventMessage, Message: msg})
 		}
+
+	case *events.HistorySync:
+		// Load contact names once for the whole batch, never per message.
+		contacts, _ := c.cli.Store.Contacts.GetAllContacts(context.Background())
+		accepted, skipped := translateHistory(evt.Data, c.cli.ParseWebMessage, func(event *events.Message, message *Inbound) {
+			if message.Name == "" {
+				peer, _ := types.ParseJID(message.From)
+				contact := contacts[peer.ToNonAD()]
+				for _, name := range []string{contact.FullName, contact.FirstName, contact.PushName, contact.BusinessName} {
+					if name != "" {
+						message.Name = name
+						break
+					}
+				}
+			}
+			c.captureMedia(event, message)
+			c.emit(Event{Kind: EventMessage, Message: message})
+		}, func(lid types.JID) types.JID {
+			phone, _ := c.cli.Store.LIDs.GetPNForLID(context.Background(), lid.ToNonAD())
+			return phone
+		})
+		c.logConnection("History sync received (private_messages=%d, excluded=%d)", accepted, skipped)
 
 	case *events.Receipt:
 		for _, ev := range translateReceipt(evt) {
@@ -607,16 +665,10 @@ func (c *whatsmeowClient) translate(raw any) {
 }
 
 func translateMessage(evt *events.Message) *Inbound {
-	// O que o proprio numero mandou volta pelo espelho dos outros
-	// aparelhos; deixar passar criaria uma conversa de entrada para cada
-	// mensagem que o servico acabou de enviar.
-	if evt.Info.IsFromMe {
-		return nil
-	}
 	// Grupo esta fora do escopo por desenho: a caixa nao tem conceito de
 	// conversa com varios participantes, e criar uma seria pior que nao
 	// criar.
-	if evt.Info.IsGroup || evt.Info.Chat.Server == types.BroadcastServer || evt.Info.Chat.Server == types.NewsletterServer {
+	if evt.Info.IsGroup || (evt.Info.Chat.Server != "" && evt.Info.Chat.Server != types.DefaultUserServer && evt.Info.Chat.Server != types.HiddenUserServer) {
 		return nil
 	}
 	// Revogacao, reacao e chave de sessao nao sao mensagem para ninguem
@@ -631,16 +683,29 @@ func translateMessage(evt *events.Message) *Inbound {
 		text = m.GetExtendedTextMessage().GetText()
 	}
 	sender := evt.Info.Sender.ToNonAD()
+	name := evt.Info.PushName
+	alternate := evt.Info.SenderAlt
+	if evt.Info.IsFromMe {
+		// Sender/PushName identify our own account. Route the mirror to the
+		// conversation peer without overwriting the customer's name with ours.
+		sender = evt.Info.Chat.ToNonAD()
+		alternate = evt.Info.RecipientAlt
+		name = ""
+	}
 	// Use the protocol's alternate phone address when a privacy LID is supplied.
 	// Never interpret opaque LID digits as a phone number.
-	if sender.Server == types.HiddenUserServer && evt.Info.SenderAlt.Server == types.DefaultUserServer {
-		sender = evt.Info.SenderAlt.ToNonAD()
+	if sender.Server == types.HiddenUserServer && alternate.Server == types.DefaultUserServer {
+		sender = alternate.ToNonAD()
+	}
+	if sender.Server != types.DefaultUserServer && sender.Server != types.HiddenUserServer {
+		return nil
 	}
 	return &Inbound{
-		ID:   evt.Info.ID,
-		From: sender.String(),
-		Name: evt.Info.PushName,
-		Text: text,
+		ID:     evt.Info.ID,
+		From:   sender.String(),
+		FromMe: evt.Info.IsFromMe,
+		Name:   name,
+		Text:   text,
 		// Midia nao entra nesta etapa, mas tem que aparecer: o cliente
 		// manda a foto do boleto e escreve "e esse aqui", e sem a marca o
 		// atendente le so o "e esse aqui".

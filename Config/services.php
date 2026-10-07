@@ -49,6 +49,11 @@ return function (ContainerConfigurator $configurator): void {
             ->tag('mautic.inbox.attachment');
     }
 
+    if (class_exists(\MauticPlugin\MauticInboxBundle\Entity\ConversationState::class)) {
+        $services->set(\MauticPlugin\MauticWhatsQrBundle\Inbox\HistoryInboxIntegration::class);
+        $services->alias(\MauticPlugin\MauticWhatsQrBundle\Domain\HistoryInboxIntegrationInterface::class, \MauticPlugin\MauticWhatsQrBundle\Inbox\HistoryInboxIntegration::class);
+    }
+
     $services->set(QrTransport::class)
         ->tag(TransportResolver::TAG, ['asset_type' => AssetType::WhatsAppQrSession->value]);
 };
