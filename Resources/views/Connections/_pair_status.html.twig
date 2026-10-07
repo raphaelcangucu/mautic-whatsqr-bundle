@@ -35,6 +35,13 @@
             </div>
             <div class="whatsqr-aside">{{ ('mautic.whatsqr.pair.'~stage~'.note')|trans }}</div>
             <a class="btn btn-primary" href="{{ path('mautic_inbox_index') }}">{{ 'mautic.whatsqr.action.inbox'|trans }}</a>
+            {% if stage == 'connected' and canEdit %}
+                <form method="post" action="{{ path('mautic_whatsqr_sync_history', {assetId: asset.id}) }}" class="mt-md">
+                    <input type="hidden" name="_token" value="{{ historyToken is defined ? historyToken : csrf_token('whatsqr_history_'~asset.id) }}">
+                    <button class="btn btn-default" type="submit"><i class="ri-refresh-line" aria-hidden="true"></i> {{ 'mautic.whatsqr.action.sync_history'|trans }}</button>
+                </form>
+                <div class="whatsqr-aside">{{ 'mautic.whatsqr.history.note'|trans }}</div>
+            {% endif %}
 
         {% else %}
             <div class="whatsqr-figure">
@@ -68,4 +75,3 @@
             {% endif %}
         {% endif %}
     </div>
-

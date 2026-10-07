@@ -23,7 +23,7 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
  * Toda a traducao mora aqui -- o dialeto do servico entra, SessionState e SentMessage
  * saem, e nenhum "status" cru atravessa para a tela ou para a fila.
  */
-final class WhatsMeowDriver implements SessionDriverInterface, SessionProvisioningDriverInterface, ProfileImageDriverInterface, AttachmentDriverInterface
+final class WhatsMeowDriver implements SessionDriverInterface, SessionProvisioningDriverInterface, ProfileImageDriverInterface, AttachmentDriverInterface, HistoryDriverInterface
 {
     use AttachmentResponseTrait;
     /**
@@ -34,6 +34,14 @@ final class WhatsMeowDriver implements SessionDriverInterface, SessionProvisioni
     private const TIMEOUT_SECONDS = 10;
 
     private string $baseUri;
+
+    public function requestHistory(MetaAsset $asset, array $anchors = []): void
+    {
+        $body = $this->request('POST', '/sessions/'.rawurlencode($this->sessionId($asset)).'/history', ['chats' => $anchors]);
+        if ('requested' !== ($body['status'] ?? null)) {
+            throw new \RuntimeException('The WhatsApp service did not acknowledge the history request.');
+        }
+    }
 
     public function __construct(
         private readonly HttpClientInterface $http,

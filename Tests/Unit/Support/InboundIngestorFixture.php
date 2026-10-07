@@ -26,6 +26,9 @@ use MauticPlugin\MauticMetaBundle\Entity\MetaConversationRepository;
 use MauticPlugin\MauticMetaBundle\Entity\MetaConnection;
 use MauticPlugin\MauticMetaBundle\Entity\MetaMessage;
 use MauticPlugin\MauticMetaBundle\Entity\MetaMessageRepository;
+use MauticPlugin\MauticInboxBundle\Entity\ConversationState;
+use MauticPlugin\MauticWhatsQrBundle\Application\HistoryRecorder;
+use MauticPlugin\MauticWhatsQrBundle\Inbox\HistoryInboxIntegration;
 use MauticPlugin\MauticWhatsQrBundle\Application\InboundIngestor;
 use MauticPlugin\MauticWhatsQrBundle\Application\SessionStateRecorder;
 use Psr\Log\NullLogger;
@@ -74,6 +77,9 @@ trait InboundIngestorFixture
      */
     private array $inboxCalls = [];
 
+    private array $identityCalls = [];
+    private array $historyStates = [];
+
     private int $nextRowId = 1;
 
     private function qrAsset(string $sessionId = 'sess-atendimento', array $settings = []): MetaAsset
@@ -92,6 +98,9 @@ trait InboundIngestorFixture
         $entityManager = $this->memoryEntityManager();
         $phones = new PhoneNormalizer();
         $inbox = $this->inboxSpy();
+        $states = $this->createMock(\Doctrine\ORM\EntityRepository::class);
+        $states->method('findOneBy')->willReturnCallback(fn (array $criteria): ?ConversationState => $this->historyStates[$criteria['conversation']->getId()] ?? null);
+        $entityManager->method('getRepository')->willReturn($states);
 
         return new InboundIngestor(
             $entityManager,
@@ -113,6 +122,7 @@ trait InboundIngestorFixture
             // duble so afirmaria que o ingestor chamou alguem.
             new SessionStateRecorder($entityManager, new NullLogger()),
             new NullLogger(),
+            new HistoryRecorder($this->conversationRepository(), $entityManager, $phones, new HistoryInboxIntegration($entityManager)),
         );
     }
 
@@ -156,6 +166,10 @@ trait InboundIngestorFixture
                 $this->assignRowId($entity, MetaMessage::class);
                 $this->messageRows[$entity->getAsset()->getExternalId().'|'.$entity->getExternalId()] = $entity;
             }
+            if ($entity instanceof ConversationState) {
+                $this->assignRowId($entity, ConversationState::class);
+                $this->historyStates[$entity->getConversation()->getId()] = $entity;
+            }
         });
 
         return $entityManager;
@@ -177,6 +191,7 @@ trait InboundIngestorFixture
     private function emptyContactTable(): Connection
     {
         $connection = $this->createMock(Connection::class);
+        $connection->method('transactional')->willReturnCallback(static fn (callable $operation) => $operation());
         $connection->method('fetchFirstColumn')->willReturn([]);
 
         return $connection;
@@ -191,7 +206,11 @@ trait InboundIngestorFixture
                 return null;
             }
 
-            return $this->conversationRows[$this->conversationKey($asset, (string) ($criteria['channel'] ?? ''), (string) ($criteria['recipient'] ?? ''))] ?? null;
+            foreach ((array) ($criteria['recipient'] ?? '') as $recipient) {
+                $found = $this->conversationRows[$this->conversationKey($asset, (string) ($criteria['channel'] ?? ''), (string) $recipient)] ?? null;
+                if (null !== $found) { return $found; }
+            }
+            return null;
         });
 
         return $repository;
@@ -206,7 +225,11 @@ trait InboundIngestorFixture
                 return null;
             }
 
-            return $this->messageRows[$asset->getExternalId().'|'.(string) ($criteria['externalId'] ?? '')] ?? null;
+            foreach ((array) ($criteria['externalId'] ?? '') as $externalId) {
+                $found = $this->messageRows[$asset->getExternalId().'|'.(string) $externalId] ?? null;
+                if (null !== $found) { return $found; }
+            }
+            return null;
         });
 
         return $repository;
@@ -215,12 +238,12 @@ trait InboundIngestorFixture
     private function identityManager(): IdentityManager
     {
         $identities = $this->createMock(IdentityManager::class);
-        $identities->method('registerInteraction')->willReturnCallback(
-            static fn (MetaAsset $asset, string $externalId, ?string $username = null, $contact = null): MetaContactIdentity => (new MetaContactIdentity())
-                ->setAsset($asset)
-                ->setExternalId($externalId)
-                ->setContact($contact)
-        );
+        $identities->method('registerInteraction')->willReturnCallback(function (MetaAsset $asset, string $externalId, ?string $username = null, $contact = null): MetaContactIdentity {
+            $this->identityCalls[] = 'interaction';
+            return (new MetaContactIdentity())->setAsset($asset)->setExternalId($externalId)->setContact($contact);
+        });
+        $identities->method('optIn')->willReturnCallback(function (): void { $this->identityCalls[] = 'opt_in'; });
+        $identities->method('optOut')->willReturnCallback(function (): void { $this->identityCalls[] = 'opt_out'; });
 
         return $identities;
     }

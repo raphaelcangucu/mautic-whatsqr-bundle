@@ -66,9 +66,14 @@ func run() error {
 	}
 	defer dir.Close()
 
+	history, err := webhook.NewHistoryOutbox(cfg.StorePath + ".history")
+	if err != nil {
+		return fmt.Errorf("opening private history outbox: %w", err)
+	}
 	sender := webhook.New(webhook.Options{
-		URL:    cfg.WebhookURL,
-		Secret: secrets.Secret,
+		History: history,
+		URL:     cfg.WebhookURL,
+		Secret:  secrets.Secret,
 	})
 	defer sender.Close()
 

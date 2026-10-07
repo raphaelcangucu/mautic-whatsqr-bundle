@@ -83,6 +83,10 @@
                 <div class="whatsqr-cell whatsqr-cell--actions">
                     {% if canEdit %}<a class="btn btn-default" href="{{ path('mautic_whatsqr_connection_edit', {assetId: row.assetId}) }}" aria-label="{{ 'mautic.whatsqr.action.edit_named'|trans({'%name%':row.name}) }}"><i class="ri-pencil-line" aria-hidden="true"></i> {{ 'mautic.whatsqr.action.edit'|trans }}</a>{% endif %}
                     <a class="btn btn-default" href="{{ path('mautic_whatsqr_pair', {assetId: row.assetId}) }}">{{ 'mautic.whatsqr.action.pair'|trans }}</a>
+                    {% if canEdit and row.situation == 'connected' %}<form method="post" action="{{ path('mautic_whatsqr_sync_history', {assetId: row.assetId}) }}">
+                        <input type="hidden" name="_token" value="{{ csrf_token('whatsqr_history_'~row.assetId) }}">
+                        <button class="btn btn-default" type="submit" aria-label="{{ 'mautic.whatsqr.action.sync_history'|trans }} · {{ row.name }}"><i class="ri-refresh-line" aria-hidden="true"></i> {{ 'mautic.whatsqr.action.sync_history'|trans }}</button>
+                    </form>{% endif %}
                 </div>
 
                 {#
