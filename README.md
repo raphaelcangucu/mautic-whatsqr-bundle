@@ -32,6 +32,27 @@ A navegação GET não abre nem apaga sessões. Iniciar e renovar usam POST, per
 de edição e CSRF. Renovar não apaga credenciais de contas conectadas ou em
 reconexão. Número e JID só são registrados após o evento real de pareamento.
 
+## Gerenciar conexões pelo painel
+
+Em `/s/whatsqr/connections`, **Editar nome** muda somente o nome interno da conta;
+o ID da sessão, os segredos, o telefone, as conversas e o pareamento são preservados.
+**Nova conexão** solicita um nome e o servidor de uma conexão QR já configurada.
+A nova conta recebe um identificador aleatório e um segredo de webhook exclusivo,
+criptografado pelo CredentialVault. Ela não herda o número nem a sessão do celular anterior.
+
+Criar o cadastro redireciona para o pareamento. Somente **Gerar QR**, via POST com
+CSRF e permissão de edição, registra a nova sessão no serviço e inicia o pareamento.
+O serviço deve incluir `POST /sessions/{id}/configuration`: o registro é autenticado,
+limitado e aditivo; nunca substitui segredos existentes. Registros adicionais ficam
+em `<store_path>.sessions.json`, privado (0600), com gravação atômica. O serviço já
+pareado não precisa ser reiniciado para adicionar outra conta. Atualize plugin e
+serviço juntos ao habilitar esse fluxo pela primeira vez.
+
+As ações exigem `meta:connections:create` / `meta:connections:edit`; o cadastro
+continua usando `MetaAsset`, sem novas tabelas ou migrações. Formulários validam
+CSRF, nome (1–191 caracteres) e servidor disponível. Sem servidor QR configurado,
+o formulário informa a configuração necessária e não permite salvar.
+
 ## Serviço
 
 Compilar em `service/`:

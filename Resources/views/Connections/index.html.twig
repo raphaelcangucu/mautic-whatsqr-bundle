@@ -11,7 +11,7 @@
 {% block headerTitle %}{{ 'mautic.whatsqr.connections'|trans }}{% endblock %}
 
 {% block content %}
-{{ includeStylesheet('plugins/MauticWhatsQrBundle/Assets/css/whatsqr.css?v=0.2.1') }}
+{{ includeStylesheet('plugins/MauticWhatsQrBundle/Assets/css/whatsqr.css?v=20261007-connections') }}
 <div class="whatsqr">
 
     <div class="whatsqr-head">
@@ -19,6 +19,7 @@
             <h2>{{ 'mautic.whatsqr.connections'|trans }}</h2>
             <p>{{ 'mautic.whatsqr.connections.lead'|trans }}</p>
         </div>
+        {% if canCreate %}<a class="btn btn-primary" href="{{ path('mautic_whatsqr_connection_new') }}"><i class="ri-add-line" aria-hidden="true"></i> {{ 'mautic.whatsqr.action.new'|trans }}</a>{% endif %}
     </div>
 
     <div class="whatsqr-box">
@@ -80,6 +81,7 @@
                 </div>
 
                 <div class="whatsqr-cell whatsqr-cell--actions">
+                    {% if canEdit %}<a class="btn btn-default" href="{{ path('mautic_whatsqr_connection_edit', {assetId: row.assetId}) }}" aria-label="{{ 'mautic.whatsqr.action.edit_named'|trans({'%name%':row.name}) }}"><i class="ri-pencil-line" aria-hidden="true"></i> {{ 'mautic.whatsqr.action.edit'|trans }}</a>{% endif %}
                     <a class="btn btn-default" href="{{ path('mautic_whatsqr_pair', {assetId: row.assetId}) }}">{{ 'mautic.whatsqr.action.pair'|trans }}</a>
                 </div>
 

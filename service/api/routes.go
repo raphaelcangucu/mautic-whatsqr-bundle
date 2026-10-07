@@ -78,6 +78,8 @@ type Options struct {
 	// HasSecret diz se aquele id tem segredo de webhook configurado. Nil
 	// aceita qualquer id -- e o padrao do teste; o servico sempre preenche.
 	HasSecret func(sessionID string) bool
+	// Authenticated additive provisioning; never replaces an existing secret.
+	RegisterSession func(sessionID, secret string) error
 
 	// MaxBody e o teto do corpo de um pedido.
 	MaxBody int64
@@ -114,6 +116,7 @@ type route struct {
 
 func (s *Server) routes() []route {
 	return []route{
+		{"POST /sessions/{id}/configuration", s.configureSession},
 		{"POST /sessions", s.openSession},
 		{"GET /sessions/{id}/qr", s.sessionQR},
 		{"GET /sessions/{id}/events", s.sessionEvents},
@@ -123,6 +126,24 @@ func (s *Server) routes() []route {
 		{"POST /sessions/{id}/messages", s.sendMessage},
 		{"GET /health", s.health},
 	}
+}
+
+func (s *Server) configureSession(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		WebhookSecret string `json:"webhook_secret"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	if s.opts.RegisterSession == nil {
+		writeError(w, http.StatusServiceUnavailable, false, "mobile session registration is unavailable")
+		return
+	}
+	if err := s.opts.RegisterSession(r.PathValue("id"), body.WebhookSecret); err != nil {
+		writeError(w, http.StatusConflict, false, "session configuration could not be registered")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": r.PathValue("id"), "configured": true})
 }
 
 // Handler monta o mux a partir da tabela e o envolve no token.

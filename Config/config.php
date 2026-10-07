@@ -39,6 +39,16 @@ return [
                 'controller'   => ConnectionsController::class.'::pair',
                 'requirements' => ['assetId' => '\\d+'],
             ],
+            'mautic_whatsqr_connection_new' => [
+                'path' => '/whatsqr/connections/new',
+                'controller' => ConnectionsController::class.'::new',
+                'method' => ['GET', 'POST'],
+            ],
+            'mautic_whatsqr_connection_edit' => [
+                'path' => '/whatsqr/connections/{assetId}/edit',
+                'controller' => ConnectionsController::class.'::edit',
+                'method' => ['GET', 'POST'], 'requirements' => ['assetId' => '\\d+'],
+            ],
             'mautic_whatsqr_pair_start' => [
                 'path' => '/whatsqr/connections/{assetId}/pair/start',
                 'controller' => ConnectionsController::class.'::start',

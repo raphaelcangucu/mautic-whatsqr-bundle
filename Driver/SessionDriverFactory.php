@@ -168,6 +168,15 @@ final class SessionDriverFactory
      * motor apontam para processos diferentes, e um adaptador compartilhado falaria pelo
      * endereco do ultimo que pediu.
      */
+    public function configureAdditionalAsset(MetaAsset $asset, MetaAsset $source, string $webhookSecret): void
+    {
+        $this->forAsset($source); // Validate the configured server before any writes.
+        $settings = $source->getSettings();
+        $this->configure($asset, self::ENGINE_WHATSMEOW,
+            (string) $settings[self::SETTING_BASE_URI],
+            $this->vault->open((string) $settings[self::SETTING_TOKEN]), $webhookSecret);
+    }
+
     public function forAsset(MetaAsset $asset): SessionDriverInterface
     {
         if (AssetType::WhatsAppQrSession !== $asset->getType()) {

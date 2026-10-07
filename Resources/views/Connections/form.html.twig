@@ -1,0 +1,38 @@
+{% extends '@MauticCore/Default/content.html.twig' %}
+{% block mauticContent %}whatsqr{% endblock %}
+{% block headerTitle %}{{ (editing ? 'mautic.whatsqr.action.edit' : 'mautic.whatsqr.action.new')|trans }}{% endblock %}
+{% block content %}
+{{ includeStylesheet('plugins/MauticWhatsQrBundle/Assets/css/whatsqr.css?v=20261007-connections') }}
+<div class="whatsqr">
+  <div class="whatsqr-head">
+    <div><h2>{{ (editing ? 'mautic.whatsqr.form.edit.title' : 'mautic.whatsqr.action.new')|trans }}</h2><p>{{ (editing ? 'mautic.whatsqr.form.edit.lead' : 'mautic.whatsqr.form.new.lead')|trans }}</p></div>
+    <a class="btn btn-default" href="{{ path('mautic_whatsqr_connections') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i> {{ 'mautic.whatsqr.action.back'|trans }}</a>
+  </div>
+  <div class="whatsqr-form-layout">
+    <section class="whatsqr-box whatsqr-form-card">
+      <div class="whatsqr-form-heading"><span class="whatsqr-avatar"><i class="ri-whatsapp-line" aria-hidden="true"></i></span><div><h3>{{ 'mautic.whatsqr.form.details'|trans }}</h3>{% if editing %}<p>{{ asset.phoneNumber|default('mautic.whatsqr.form.phone.pending'|trans) }}</p>{% endif %}</div></div>
+      {{ form_start(form) }}
+        {{ form_errors(form) }}
+        {{ form_row(form.name) }}
+        {% if not editing %}
+          {% if hasSources %}{{ form_row(form.source) }}{% else %}
+            {% do form.source.setRendered() %}
+            <div class="alert alert-warning" role="alert">{{ 'mautic.whatsqr.form.source.missing'|trans }}</div>
+          {% endif %}
+        {% endif %}
+        <div class="whatsqr-form-actions">
+          <a class="btn btn-default" href="{{ path('mautic_whatsqr_connections') }}">{{ 'mautic.whatsqr.action.cancel'|trans }}</a>
+          <button class="btn btn-primary" type="submit" {% if not hasSources %}disabled{% endif %}><i class="{{ editing ? 'ri-check-line' : 'ri-qr-code-line' }}" aria-hidden="true"></i> {{ (editing ? 'mautic.whatsqr.action.save' : 'mautic.whatsqr.action.create_pair')|trans }}</button>
+        </div>
+      {{ form_end(form) }}
+    </section>
+    <aside class="whatsqr-instructions">
+      <h3>{{ (editing ? 'mautic.whatsqr.form.edit.note.title' : 'mautic.whatsqr.form.new.note.title')|trans }}</h3>
+      {% if editing %}<p class="whatsqr-muted">{{ 'mautic.whatsqr.form.edit.note.body'|trans }}</p>{% else %}
+        <ol><li>{{ 'mautic.whatsqr.form.new.step.name'|trans }}</li><li>{{ 'mautic.whatsqr.form.new.step.qr'|trans }}</li><li>{{ 'mautic.whatsqr.form.new.step.inbox'|trans }}</li></ol>
+      {% endif %}
+      <div class="whatsqr-integration"><i class="ri-customer-service-2-line" aria-hidden="true"></i><p>{{ 'mautic.whatsqr.form.inbox.note'|trans }}</p></div>
+    </aside>
+  </div>
+</div>
+{% endblock %}
