@@ -4,12 +4,12 @@ Plugin de conexão de números WhatsApp por QR para o Inbox multicanal do Mautic
 O serviço Go mantém a sessão com Whatsmeow; o plugin autentica os webhooks e usa
 as conversas, contatos, consentimentos e fila do conector Meta.
 
-Versão publicada: **0.3.1**, incluindo o plugin PHP e o serviço Go.
+Versão publicada: **0.3.2**, incluindo o plugin PHP e o serviço Go.
 
 ## Dependências
 
 - Mautic 7, PHP 8.2 ou superior e [MauticMetaBundle 0.14.2](https://github.com/raphaelcangucu/mautic-meta-bundle/releases/tag/v0.14.2) ou compatível.
-- [MauticInboxBundle 1.5.0](https://github.com/raphaelcangucu/mautic-inbox-bundle/releases/tag/v1.5.0) ou compatível, para atendimento.
+- [MauticInboxBundle 1.5.2](https://github.com/raphaelcangucu/mautic-inbox-bundle/releases/tag/v1.5.2) ou compatível, para atendimento.
 - ClamAV com daemon `clamd`, socket Unix privado e assinaturas atualizadas por `freshclam` para liberar anexos.
 - Go 1.26 para compilar, com preferência pelo patch 1.26.8 definido em `service/go.mod`; binário estático Linux/amd64 em produção.
 - Whatsmeow fixado em `v0.0.0-20261005195255-6bb48c0f1ff0`.
@@ -61,7 +61,7 @@ Compilar em `service/`:
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o whatsqr .
 ```
 
-O pacote do plugin, o binário Linux/amd64 e seus checksums estão disponíveis nos assets da [release v0.3.1](https://github.com/raphaelcangucu/mautic-whatsqr-bundle/releases/tag/v0.3.1). Verifique `SHA256SUMS` antes de instalar ou substituir o serviço. O PR da criação de conexões e edição de nomes é [#1](https://github.com/raphaelcangucu/mautic-whatsqr-bundle/pull/1).
+O pacote do plugin, o binário Linux/amd64 e seus checksums estão disponíveis nos assets da [release v0.3.2](https://github.com/raphaelcangucu/mautic-whatsqr-bundle/releases/tag/v0.3.2). Verifique `SHA256SUMS` antes de instalar ou substituir o serviço. As alterações estão nos PRs [#1](https://github.com/raphaelcangucu/mautic-whatsqr-bundle/pull/1) (gestão de conexões) e [#2](https://github.com/raphaelcangucu/mautic-whatsqr-bundle/pull/2) (sincronização privada).
 
 Executar com `whatsqr -config /caminho/privado/whatsqr.json`, como serviço systemd.
 A configuração contém `listen`, `token`, `webhook_url`, `store_path`, `log_level`
