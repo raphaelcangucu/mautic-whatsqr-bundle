@@ -54,6 +54,11 @@ return [
                 'controller' => ConnectionsController::class.'::start',
                 'method' => 'POST', 'requirements' => ['assetId' => '\d+'],
             ],
+            'mautic_whatsqr_sync_history' => [
+                'path' => '/whatsqr/connections/{assetId}/history',
+                'controller' => ConnectionsController::class.'::syncHistory',
+                'method' => 'POST', 'requirements' => ['assetId' => '\\d+'],
+            ],
             'mautic_whatsqr_pair_status' => [
                 'path' => '/whatsqr/connections/{assetId}/pair/status',
                 'controller' => ConnectionsController::class.'::status',

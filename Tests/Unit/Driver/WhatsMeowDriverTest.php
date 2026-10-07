@@ -57,6 +57,17 @@ final class WhatsMeowDriverTest extends TestCase
         self::assertSame('sess-a1b2c3', $state->sessionId);
     }
 
+    public function testHistoryRequestUsesTheAuthenticatedExistingSessionWithoutPairingAgain(): void
+    {
+        $http = new MockHttpClient(function (string $method, string $url, array $options): MockResponse {
+            self::assertSame('POST', $method);
+            self::assertSame('http://127.0.0.1:8088/sessions/sess-a1b2c3/history', $url);
+            self::assertSame('Authorization: Bearer token-do-numero', $options['normalized_headers']['authorization'][0] ?? null);
+            return $this->json(['status' => 'requested'], 202);
+        });
+        $this->driver($http)->requestHistory($this->asset());
+    }
+
     public function testItTranslatesTheServiceDialectIntoSessionState(): void
     {
         $dialect = [

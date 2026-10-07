@@ -21,6 +21,112 @@ final class InboundIngestorTest extends TestCase
 {
     use InboundIngestorFixture;
 
+    public function testPhoneReplyIsOutboundAndDoesNotCreateCustomerActivityOrRunAutomation(): void
+    {
+        $asset = $this->qrAsset();
+        $ingestor = $this->inboundIngestor();
+        $first = $ingestor->ingest($asset, $this->messageEvent('5511999999999@s.whatsapp.net', 'pergunta', false, 'INCOMING'));
+        $conversation = $first->getConversation();
+        $lastInbound = $conversation->getLastInboundAt();
+        $this->inboxCalls = [];
+        $this->identityCalls = [];
+
+        $event = $this->messageEvent('5511999999999@s.whatsapp.net', 'SAIR', false, 'PHONE-REPLY');
+        $event['message']['from_me'] = true;
+        $event['message']['name'] = 'Nome do atendente';
+        $event['message']['timestamp'] = time() - 5;
+        $message = $ingestor->ingest($asset, $event);
+
+        self::assertSame('outbound', $message->getDirection());
+        self::assertSame('sent', $message->getStatus());
+        self::assertSame($conversation, $message->getConversation());
+        self::assertSame(1, $conversation->getUnreadCount());
+        self::assertSame($lastInbound, $conversation->getLastInboundAt());
+        self::assertSame([], $this->identityCalls);
+        self::assertNull($message->getPayload()['whatsqr']['consent_keyword']);
+        self::assertArrayNotHasKey('contact', $message->getPayload());
+        self::assertSame(['messagePersisted'], array_column($this->inboxCalls, 'call'));
+        self::assertSame($event['message']['timestamp'], $message->getDateAdded()->getTimestamp());
+        self::assertNull($ingestor->ingest($asset, $event));
+        self::assertCount(2, $this->persistedMessages());
+        self::assertCount(1, $this->inboxCalls);
+    }
+
+    public function testPhoneAttachmentUsesTheSamePrivateMediaReference(): void
+    {
+        $event = $this->messageEvent('5511999999999@s.whatsapp.net', 'foto enviada no celular');
+        $event['message']['from_me'] = true;
+        $event['message']['attachment'] = ['type' => 'image', 'id' => str_repeat('a', 64), 'file_size' => 200, 'mime_type' => 'image/png'];
+        $message = $this->inboundIngestor()->ingest($this->qrAsset(), $event);
+        self::assertSame('image', $message->getMessageType());
+        self::assertSame('outbound', $message->getDirection());
+        self::assertSame(str_repeat('a', 64), $message->getPayload()['message']['image']['id']);
+        self::assertSame(0, $message->getConversation()->getUnreadCount());
+        self::assertNull($message->getConversation()->getLastInboundAt());
+    }
+
+    public function testOldHistoryDoesNotReorderRecentChatCreateUnreadAlertsOrRunConsentAndAutomation(): void
+    {
+        $asset = $this->qrAsset();
+        $ingestor = $this->inboundIngestor();
+        $new = $ingestor->ingest($asset, $this->messageEvent('5511999999999@s.whatsapp.net', 'hoje', false, 'LIVE'));
+        $conversation = $new->getConversation();
+        $lastMessage = $conversation->getLastMessageAt();
+        $lastInbound = $conversation->getLastInboundAt();
+        $conversation->setStatus('resolved');
+        $this->identityCalls = $this->inboxCalls = [];
+        $event = $this->messageEvent('5511999999999@s.whatsapp.net', 'SAIR', false, 'OLD');
+        $event['message']['historical'] = true;
+        $event['message']['timestamp'] = time() - 86400 * 30;
+        $old = $ingestor->ingest($asset, $event);
+        self::assertSame($conversation, $old->getConversation());
+        self::assertSame($event['message']['timestamp'], $old->getDateAdded()->getTimestamp());
+        self::assertSame($lastMessage, $conversation->getLastMessageAt());
+        self::assertSame($lastInbound, $conversation->getLastInboundAt());
+        self::assertSame('resolved', $conversation->getStatus());
+        self::assertSame(1, $conversation->getUnreadCount());
+        self::assertSame([], $this->identityCalls);
+        self::assertSame([], $this->inboxCalls);
+        self::assertNull($ingestor->ingest($asset, $event));
+    }
+
+    public function testNewHistoricalConversationIsQuietAndHasItsOriginalDate(): void
+    {
+        $event = $this->messageEvent('5511999999999@s.whatsapp.net', 'ontem');
+        $event['message']['historical'] = true;
+        $event['message']['timestamp'] = time() - 86400;
+        $message = $this->inboundIngestor()->ingest($this->qrAsset(), $event);
+        self::assertSame($event['message']['timestamp'], $message->getConversation()->getLastMessageAt()->getTimestamp());
+        self::assertSame(0, $message->getConversation()->getUnreadCount());
+        self::assertFalse($this->historyStates[$message->getConversation()->getId()]->needsResponse());
+        self::assertSame([], $this->inboxCalls);
+    }
+
+    public function testHistoricalMessageIdsAreScopedToEachAccount(): void
+    {
+        $ingestor = $this->inboundIngestor();
+        $event = $this->messageEvent('5511999999999@s.whatsapp.net', 'histórico');
+        $event['message']['historical'] = true;
+        $first = $ingestor->ingest($this->qrAsset('account-a'), $event);
+        $second = $ingestor->ingest($this->qrAsset('account-b'), $event);
+        self::assertNotSame($first->getExternalId(), $second->getExternalId());
+        self::assertSame('ABC123', $first->getPayload()['message']['id']);
+        self::assertCount(2, $this->persistedMessages());
+    }
+
+    public function testHistoryAndPhoneMirrorsCannotCreateGroupConversations(): void
+    {
+        $ingestor = $this->inboundIngestor();
+        foreach ([false, true] as $fromMe) {
+            $event = $this->messageEvent('123456@g.us');
+            $event['message']['from_me'] = $fromMe;
+            $event['message']['historical'] = true;
+            self::assertNull($ingestor->ingest($this->qrAsset(), $event));
+        }
+        self::assertSame([], $this->persistedMessages());
+        self::assertSame([], $this->inboxCalls);
+    }
+
     public function testItCreatesTheConversationAndTheMessage(): void
     {
         $asset = $this->qrAsset();

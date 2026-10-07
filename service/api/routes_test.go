@@ -32,12 +32,13 @@ const testJID = "5511999990000@s.whatsapp.net"
 type fakeClient struct {
 	events chan session.Event
 
-	mu           sync.Mutex
-	qr           string
-	jid          string
-	messageID    string
-	sendErr      error
-	disconnected bool
+	mu              sync.Mutex
+	qr              string
+	jid             string
+	messageID       string
+	sendErr         error
+	disconnected    bool
+	historyRequests int
 }
 
 func newFakeClient(qr, jid string) *fakeClient {
@@ -76,6 +77,13 @@ func (c *fakeClient) Disconnect() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.disconnected = true
+}
+
+func (c *fakeClient) RequestHistory(context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.historyRequests++
+	return nil
 }
 
 // emit entrega um evento e so volta quando a goroutine da sessao o recebeu.
@@ -304,6 +312,7 @@ func TestEveryRouteRequiresTheToken(t *testing.T) {
 		"GET /sessions/{id}/media/{mediaID}": true,
 		"DELETE /sessions/{id}":              true,
 		"POST /sessions/{id}/messages":       true,
+		"POST /sessions/{id}/history":        true,
 		"GET /health":                        true,
 	}
 	routes := h.server.routes()
@@ -368,6 +377,28 @@ func TestEveryRouteRequiresTheToken(t *testing.T) {
 	h.handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("caminho desconhecido sem token: deu %d, queria 401", rec.Code)
+	}
+}
+
+func TestHistoryRequiresAnExistingConnectedSessionAndOnlyRequestsIt(t *testing.T) {
+	h := newHarness(t)
+	if rec := h.do(http.MethodPost, "/sessions/missing/history", ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown history status %d", rec.Code)
+	}
+	client := h.openPaired("paired")
+	rec := h.do(http.MethodPost, "/sessions/paired/history", "")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("history request %d %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	decode(t, rec, &body)
+	if body["status"] != "requested" || body["groups_excluded"] != true {
+		t.Fatal("request presented as completed")
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.historyRequests != 1 || client.disconnected {
+		t.Fatal("history request changed the paired session")
 	}
 }
 

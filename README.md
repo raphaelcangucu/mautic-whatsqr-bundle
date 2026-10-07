@@ -180,3 +180,18 @@ não publique credenciais no repositório.
 Envios novos por telefone consultam o identificador canônico no WhatsApp antes
 de enviar. Números brasileiros com o nono dígito aceitam a variante antiga de oito
 dígitos somente após a confirmação do próprio WhatsApp.
+
+
+### Sincronização do celular e de outros dispositivos
+
+Mensagens privadas enviadas no telefone ou em outro aparelho vinculado são espelhadas no Inbox como **saída**. O destinatário é a conversa de destino, inclusive quando o WhatsApp usa LID com endereço de telefone alternativo; o nome da própria conta não substitui o nome do cliente. Grupos, listas de transmissão, status e newsletters são excluídos no serviço e no recebimento PHP.
+
+Envios feitos pelo Inbox continuam usando o transporte existente. Seus IDs são registrados antes do envio para suprimir ecos durante a gravação da resposta HTTP. Reentregas são deduplicadas por conta e ID original. A sincronização não envia a mensagem novamente, não registra opt-in/opt-out em nome do cliente e não dispara IA, campanhas ou adaptadores `message.received`.
+
+Na página da conexão, **Sincronizar histórico** solicita ao telefone o histórico que o WhatsApp permite compartilhar. É um POST com permissão de edição e CSRF, encaminhado ao endpoint autenticado e local `POST /sessions/{id}/history`. A resposta `202 requested` confirma a solicitação, não a conclusão. Mantenha o telefone conectado à internet com o WhatsApp aberto. O protocolo e o telefone podem limitar ou recusar o histórico; uma solicitação não garante acesso a todas as mensagens existentes no aparelho.
+
+Eventos `HistorySync` importam ambas as direções com as datas originais, reconhecem mensagens já registradas e preservam responsáveis, situação e contagem de não lidas das conversas existentes. Conversas antigas novas são criadas sem exigir resposta nem gerar sons, push ou automação. As referências de anexos passam pelas mesmas regras de tamanho, MIME, hash, acesso e armazenamento privado; mídia de visualização única continua excluída.
+
+O histórico usa uma fila persistente separada em `<store_path>.history`, diretório `0700` e arquivos `0600`, sem tokens ou chaves de mídia. A fila só remove um item após confirmação do Mautic, sobrevive a reinícios e prioriza mensagens novas. O processamento é serial e limitado para reduzir carga no Mautic. Limites: 128 MiB de fila, 128 KiB por evento, solicitação de até 365 dias/64 MiB, e intervalo mínimo de cinco minutos entre solicitações. Falhas de entrega preservam o item para nova tentativa. Mensagens fora do intervalo ou não disponibilizadas pelo telefone não são apresentadas como recuperadas.
+
+A integração opcional com `MauticInboxBundle` cria o estado silencioso das conversas importadas. Nenhum schema novo é necessário: são reutilizadas as entidades de conversa, mensagem e estado existentes. Os testes de regressão são locais e usam repositórios/conexões simulados; os testes Go usam diretórios temporários, nunca a base ou o armazenamento pareado de produção.

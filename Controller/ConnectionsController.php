@@ -159,6 +159,7 @@ final class ConnectionsController extends CommonController
             'jid' => trim((string) ($asset->getSettings()[SessionState::SETTING_JID] ?? '')) ?: null,
             'startToken' => $tokens->getToken('whatsqr_pair_start_'.$assetId)->getValue(),
             'restartToken' => $tokens->getToken('whatsqr_pair_restart_'.$assetId)->getValue(),
+            'historyToken' => $tokens->getToken('whatsqr_history_'.$assetId)->getValue(),
         ];
         if ($request->hasSession()) { $request->getSession()->save(); }
         $previous = (string) $request->headers->get('Last-Event-ID', $request->query->get('version', ''));
@@ -212,6 +213,24 @@ final class ConnectionsController extends CommonController
             $starter->start($asset);
         } catch (\Throwable $failed) {
             $this->addFlash('error', $this->translator->trans('mautic.whatsqr.connection.start.failed'));
+        }
+        return $this->redirectToRoute('mautic_whatsqr_pair', ['assetId' => $assetId], Response::HTTP_SEE_OTHER);
+    }
+
+    public function syncHistory(int $assetId, Request $request, CorePermissions $permissions, MetaAssetRepository $assets, SessionDriverFactory $drivers): RedirectResponse
+    {
+        if (!$permissions->isGranted('meta:connections:edit')
+            || !$this->isCsrfTokenValid('whatsqr_history_'.$assetId, (string) $request->request->get('_token'))) {
+            throw $this->createAccessDeniedException();
+        }
+        $asset = $this->qrAsset($assets, $assetId);
+        try {
+            $driver = $drivers->forAsset($asset);
+            if (!$driver instanceof \MauticPlugin\MauticWhatsQrBundle\Driver\HistoryDriverInterface) { throw new \DomainException('History is unavailable for this driver.'); }
+            $driver->requestHistory($asset);
+            $this->addFlash('notice', $this->translator->trans('mautic.whatsqr.history.requested'));
+        } catch (\Throwable) {
+            $this->addFlash('error', $this->translator->trans('mautic.whatsqr.history.failed'));
         }
         return $this->redirectToRoute('mautic_whatsqr_pair', ['assetId' => $assetId], Response::HTTP_SEE_OTHER);
     }

@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/macro-markets/whatsqr/session"
 )
@@ -124,8 +125,27 @@ func (s *Server) routes() []route {
 		{"GET /sessions/{id}/media/{mediaID}", s.attachment},
 		{"DELETE /sessions/{id}", s.closeSession},
 		{"POST /sessions/{id}/messages", s.sendMessage},
+		{"POST /sessions/{id}/history", s.requestHistory},
 		{"GET /health", s.health},
 	}
+}
+
+func (s *Server) requestHistory(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	err := s.opts.Manager.RequestHistory(ctx, r.PathValue("id"))
+	if err != nil {
+		status := http.StatusServiceUnavailable
+		if errors.Is(err, session.ErrUnknownSession) {
+			status = http.StatusNotFound
+		}
+		if errors.Is(err, session.ErrHistoryBusy) {
+			status = http.StatusTooManyRequests
+		}
+		writeError(w, status, true, "history could not be requested; keep the phone online and retry later")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"status": "requested", "groups_excluded": true})
 }
 
 func (s *Server) configureSession(w http.ResponseWriter, r *http.Request) {
