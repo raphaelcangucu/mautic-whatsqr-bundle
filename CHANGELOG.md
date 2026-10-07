@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1 - 2026-10-07
+
+- Adiciona **Editar nome** e **Nova conexão** à tela de conexões WhatsApp QR.
+- Renomeia somente a identificação interna, preservando sessão, telefone, histórico e credenciais.
+- Cria novas contas usando um servidor já configurado, com ID e segredo exclusivos; inicia o pareamento apenas por POST explícito.
+- Provisiona sessões no serviço Whatsmeow por API autenticada e aditiva, com registro privado persistente e proteção contra substituição de segredos existentes.
+- Valida permissões, CSRF, nome e servidor; traduz formulários e mensagens de validação em português e inglês.
+- Adapta os formulários a telas menores. Validação: 107 testes unitários / 527 asserções, quatro testes JavaScript e testes Go com detector de concorrência.
+
 ## 0.3.0 - 2026-10-06
 
 - Exige varredura ClamAV para anexos, com bloqueio em caso de erro/indisponibilidade; confere SHA-256 também no cache e o MIME real/declaração/extensão.

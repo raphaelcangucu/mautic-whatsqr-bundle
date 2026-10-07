@@ -4,7 +4,7 @@ Plugin de conexão de números WhatsApp por QR para o Inbox multicanal do Mautic
 O serviço Go mantém a sessão com Whatsmeow; o plugin autentica os webhooks e usa
 as conversas, contatos, consentimentos e fila do conector Meta.
 
-Versão publicada: **0.3.0**, incluindo o plugin PHP e o serviço Go.
+Versão publicada: **0.3.1**, incluindo o plugin PHP e o serviço Go.
 
 ## Dependências
 
@@ -18,7 +18,7 @@ Versão publicada: **0.3.0**, incluindo o plugin PHP e o serviço Go.
 
 ## Funcionamento
 
-1. Criar uma conexão interna Meta e um asset `whatsapp_qr_session`. O ID externo do
+1. Na configuração inicial, criar uma conexão interna Meta e um asset `whatsapp_qr_session`. O ID externo do
    asset deve coincidir com a chave da sessão no serviço, por exemplo `suporte`.
 2. Configurar o endereço local, token e segredo de webhook no asset, criptografados
    pelo CredentialVault do conector. Nenhum token entra na página ou no QR.
@@ -61,7 +61,7 @@ Compilar em `service/`:
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o whatsqr .
 ```
 
-O binário Linux/amd64 e seu checksum estão disponíveis nos assets da [release v0.3.0](https://github.com/raphaelcangucu/mautic-whatsqr-bundle/releases/tag/v0.3.0). Verifique `SHA256SUMS` antes de substituir o serviço.
+O pacote do plugin, o binário Linux/amd64 e seus checksums estão disponíveis nos assets da [release v0.3.1](https://github.com/raphaelcangucu/mautic-whatsqr-bundle/releases/tag/v0.3.1). Verifique `SHA256SUMS` antes de instalar ou substituir o serviço. O PR da criação de conexões e edição de nomes é [#1](https://github.com/raphaelcangucu/mautic-whatsqr-bundle/pull/1).
 
 Executar com `whatsqr -config /caminho/privado/whatsqr.json`, como serviço systemd.
 A configuração contém `listen`, `token`, `webhook_url`, `store_path`, `log_level`
@@ -73,7 +73,7 @@ O webhook público é `/whatsqr/webhook`. Ele exige `X-WhatsQr-Key`, timestamp e
 A sessão assinada deve coincidir com a sessão do evento. Eventos são deduplicados
 por conta e ID de mensagem.
 
-API local autenticada: `GET /health`, `POST /sessions`, `GET /sessions/{id}/qr`,
+API local autenticada: `GET /health`, `POST /sessions/{id}/configuration` (registro aditivo), `POST /sessions`, `GET /sessions/{id}/qr`,
 `GET /sessions/{id}/events` (SSE), `POST /sessions/{id}/messages` e `DELETE /sessions/{id}`. DELETE apaga credenciais;
 não deve ser usado para resolver indiscriminadamente problemas de rede.
 

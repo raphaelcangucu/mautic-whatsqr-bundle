@@ -8,7 +8,7 @@ use MauticPlugin\MauticWhatsQrBundle\Controller\WebhookController;
 return [
     'name'        => 'Mautic WhatsApp QR',
     'description' => 'Numero de WhatsApp pareado por QR Code, atendido pela mesma caixa dos canais oficiais da Meta.',
-    'version'     => '0.3.0',
+    'version'     => '0.3.1',
     'author'      => 'Raphael Cangucu',
     'parameters'  => [
         // Padrao para numero novo, e so isso: o motor de cada numero mora no asset dele.
