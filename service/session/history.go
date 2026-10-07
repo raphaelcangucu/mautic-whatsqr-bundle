@@ -92,9 +92,17 @@ func fullHistoryRequest(requestID string, now time.Time) *waE2E.Message {
 
 // Filter groups/broadcasts before parsing, retaining both directions and exact
 // original timestamps. Sorting is per chat and bounded by the supplied blob.
-func translateHistory(data *waHistorySync.HistorySync, parse func(types.JID, *waWeb.WebMessageInfo) (*events.Message, error), accept func(*events.Message, *Inbound)) (accepted, skipped int) {
+func translateHistory(data *waHistorySync.HistorySync, parse func(types.JID, *waWeb.WebMessageInfo) (*events.Message, error), accept func(*events.Message, *Inbound), resolvers ...func(types.JID) types.JID) (accepted, skipped int) {
 	if data == nil {
 		return
+	}
+	phones := make(map[types.JID]types.JID)
+	for _, mapping := range data.GetPhoneNumberToLidMappings() {
+		lid, _ := types.ParseJID(mapping.GetLidJID())
+		phone, _ := types.ParseJID(mapping.GetPnJID())
+		if lid.Server == types.HiddenUserServer && phone.Server == types.DefaultUserServer {
+			phones[lid.ToNonAD()] = phone.ToNonAD()
+		}
 	}
 	for _, conversation := range data.GetConversations() {
 		chat, err := types.ParseJID(conversation.GetID())
@@ -103,6 +111,12 @@ func translateHistory(data *waHistorySync.HistorySync, parse func(types.JID, *wa
 			continue
 		}
 		phone, _ := types.ParseJID(conversation.GetPnJID())
+		if phone.Server != types.DefaultUserServer && chat.Server == types.HiddenUserServer {
+			phone = phones[chat.ToNonAD()]
+			if phone.Server != types.DefaultUserServer && len(resolvers) > 0 {
+				phone = resolvers[0](chat)
+			}
+		}
 		messages := append([]*waHistorySync.HistorySyncMsg(nil), conversation.GetMessages()...)
 		sort.SliceStable(messages, func(i, j int) bool {
 			return messages[i].GetMessage().GetMessageTimestamp() < messages[j].GetMessage().GetMessageTimestamp()

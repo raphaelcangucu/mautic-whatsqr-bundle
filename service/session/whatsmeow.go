@@ -76,7 +76,7 @@ func StdoutLogger(level string) waLog.Logger {
 	if level == "" {
 		level = "WARN"
 	}
-	return waLog.Stdout("whatsmeow", level, false)
+	return privateLogger{waLog.Stdout("whatsmeow", level, false)}
 }
 
 // OpenStore abre (e migra) o arquivo de sessoes.
@@ -97,6 +97,12 @@ func OpenStore(ctx context.Context, path string, log waLog.Logger) (*WhatsmeowSt
 	container, err := sqlstore.New(ctx, "sqlite", address, log)
 	if err != nil {
 		return nil, fmt.Errorf("session: abrindo o store: %w", err)
+	}
+	// One read at startup: subsequent LID lookups during history import are
+	// served by Whatsmeow's cache, never database queries inside a message loop.
+	if err = container.LIDMap.FillCache(ctx); err != nil {
+		_ = container.Close()
+		return nil, fmt.Errorf("session: loading peer mapping cache: %w", err)
 	}
 	return &WhatsmeowStore{container: container, log: log}, nil
 }
@@ -609,6 +615,20 @@ func (c *whatsmeowClient) translate(raw any) {
 		if evt.Info.IsFromMe && c.ownSends.contains(evt.Info.ID, time.Now()) {
 			return
 		}
+		peer := evt.Info.Sender
+		if evt.Info.IsFromMe {
+			peer = evt.Info.Chat
+		}
+		if peer.Server == types.HiddenUserServer {
+			phone, _ := c.cli.Store.LIDs.GetPNForLID(context.Background(), peer.ToNonAD())
+			if phone.Server == types.DefaultUserServer {
+				if evt.Info.IsFromMe {
+					evt.Info.RecipientAlt = phone
+				} else {
+					evt.Info.SenderAlt = phone
+				}
+			}
+		}
 		if msg := translateMessage(evt); msg != nil {
 			c.captureMedia(evt, msg)
 			c.logConnection("Private message accepted (from_me=%t, unsupported=%t)", msg.FromMe, msg.Unsupported)
@@ -616,9 +636,24 @@ func (c *whatsmeowClient) translate(raw any) {
 		}
 
 	case *events.HistorySync:
+		// Load contact names once for the whole batch, never per message.
+		contacts, _ := c.cli.Store.Contacts.GetAllContacts(context.Background())
 		accepted, skipped := translateHistory(evt.Data, c.cli.ParseWebMessage, func(event *events.Message, message *Inbound) {
+			if message.Name == "" {
+				peer, _ := types.ParseJID(message.From)
+				contact := contacts[peer.ToNonAD()]
+				for _, name := range []string{contact.FullName, contact.FirstName, contact.PushName, contact.BusinessName} {
+					if name != "" {
+						message.Name = name
+						break
+					}
+				}
+			}
 			c.captureMedia(event, message)
 			c.emit(Event{Kind: EventMessage, Message: message})
+		}, func(lid types.JID) types.JID {
+			phone, _ := c.cli.Store.LIDs.GetPNForLID(context.Background(), lid.ToNonAD())
+			return phone
 		})
 		c.logConnection("History sync received (private_messages=%d, excluded=%d)", accepted, skipped)
 

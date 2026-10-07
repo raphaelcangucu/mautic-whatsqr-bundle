@@ -74,3 +74,18 @@ func TestHistoryAnchorsRejectGroupsFutureDatesAndUnboundedBatches(t *testing.T) 
 		t.Fatal("unbounded batch accepted")
 	}
 }
+
+func TestHistoryWithoutInlinePhoneUsesCachedMappingForBothDirections(t *testing.T) {
+	own := types.NewJID("5511999990000", types.DefaultUserServer)
+	client := whatsmeow.NewClient(&store.Device{ID: &own, LID: types.NewJID("own", types.HiddenUserServer)}, nil)
+	data := &waHistorySync.HistorySync{Conversations: []*waHistorySync.Conversation{{ID: proto.String("123456@lid"), Messages: []*waHistorySync.HistorySyncMsg{historicalText("in", false, 1700000000), historicalText("out", true, 1700000001)}}}}
+	lookups := 0
+	accepted, _ := translateHistory(data, client.ParseWebMessage, func(_ *events.Message, m *Inbound) {
+		if m.From != "551188887777@s.whatsapp.net" {
+			t.Fatal("unresolved history split the conversation")
+		}
+	}, func(jid types.JID) types.JID { lookups++; return types.NewJID("551188887777", types.DefaultUserServer) })
+	if accepted != 2 || lookups != 1 {
+		t.Fatal("peer lookup was performed per message")
+	}
+}
