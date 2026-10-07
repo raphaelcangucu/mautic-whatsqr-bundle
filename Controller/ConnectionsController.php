@@ -217,7 +217,7 @@ final class ConnectionsController extends CommonController
         return $this->redirectToRoute('mautic_whatsqr_pair', ['assetId' => $assetId], Response::HTTP_SEE_OTHER);
     }
 
-    public function syncHistory(int $assetId, Request $request, CorePermissions $permissions, MetaAssetRepository $assets, SessionDriverFactory $drivers): RedirectResponse
+    public function syncHistory(int $assetId, Request $request, CorePermissions $permissions, MetaAssetRepository $assets, SessionDriverFactory $drivers, \MauticPlugin\MauticWhatsQrBundle\Application\HistoryAnchorProvider $history): RedirectResponse
     {
         if (!$permissions->isGranted('meta:connections:edit')
             || !$this->isCsrfTokenValid('whatsqr_history_'.$assetId, (string) $request->request->get('_token'))) {
@@ -227,7 +227,7 @@ final class ConnectionsController extends CommonController
         try {
             $driver = $drivers->forAsset($asset);
             if (!$driver instanceof \MauticPlugin\MauticWhatsQrBundle\Driver\HistoryDriverInterface) { throw new \DomainException('History is unavailable for this driver.'); }
-            $driver->requestHistory($asset);
+            $driver->requestHistory($asset, $history->forAsset($asset));
             $this->addFlash('notice', $this->translator->trans('mautic.whatsqr.history.requested'));
         } catch (\Throwable) {
             $this->addFlash('error', $this->translator->trans('mautic.whatsqr.history.failed'));

@@ -35,9 +35,9 @@ final class WhatsMeowDriver implements SessionDriverInterface, SessionProvisioni
 
     private string $baseUri;
 
-    public function requestHistory(MetaAsset $asset): void
+    public function requestHistory(MetaAsset $asset, array $anchors = []): void
     {
-        $body = $this->request('POST', '/sessions/'.rawurlencode($this->sessionId($asset)).'/history');
+        $body = $this->request('POST', '/sessions/'.rawurlencode($this->sessionId($asset)).'/history', ['chats' => $anchors]);
         if ('requested' !== ($body['status'] ?? null)) {
             throw new \RuntimeException('The WhatsApp service did not acknowledge the history request.');
         }

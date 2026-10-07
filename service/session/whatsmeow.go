@@ -598,6 +598,13 @@ func (c *whatsmeowClient) translate(raw any) {
 		c.emit(Event{Kind: EventFailed, Reason: fmt.Sprintf("%s: %s", evt.Reason, evt.Message)})
 
 	case *events.Message:
+		if response := evt.Message.GetProtocolMessage().GetPeerDataOperationRequestResponseMessage(); response != nil {
+			for _, result := range response.GetPeerDataOperationResult() {
+				if full := result.GetFullHistorySyncOnDemandRequestResponse(); full != nil {
+					c.logConnection("History full request response (code=%s)", full.GetResponseCode().String())
+				}
+			}
+		}
 		c.logConnection("Message event (from_me=%t, group=%t)", evt.Info.IsFromMe, evt.Info.IsGroup)
 		if evt.Info.IsFromMe && c.ownSends.contains(evt.Info.ID, time.Now()) {
 			return

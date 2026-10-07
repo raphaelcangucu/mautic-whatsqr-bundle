@@ -52,3 +52,25 @@ func TestHistoryRequestHasBoundedStorageAndNoGroupHistory(t *testing.T) {
 		t.Fatal("unbounded history request")
 	}
 }
+
+func TestHistoryAnchorsRejectGroupsFutureDatesAndUnboundedBatches(t *testing.T) {
+	valid := HistoryAnchor{JID: "5511999999999@s.whatsapp.net", ID: "real-id", Timestamp: time.Now().Unix()}
+	if err := ValidateHistoryAnchors([]HistoryAnchor{valid}); err != nil {
+		t.Fatal(err)
+	}
+	for _, jid := range []string{"123@g.us", "status@broadcast", "123@newsletter", "5511999999999:3@s.whatsapp.net"} {
+		bad := valid
+		bad.JID = jid
+		if ValidateHistoryAnchors([]HistoryAnchor{bad}) == nil {
+			t.Fatalf("non-private anchor accepted: %s", jid)
+		}
+	}
+	bad := valid
+	bad.Timestamp = time.Now().Unix() + 3600
+	if ValidateHistoryAnchors([]HistoryAnchor{bad}) == nil {
+		t.Fatal("future date accepted")
+	}
+	if ValidateHistoryAnchors(make([]HistoryAnchor, 33)) == nil {
+		t.Fatal("unbounded batch accepted")
+	}
+}

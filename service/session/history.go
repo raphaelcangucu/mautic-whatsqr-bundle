@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -19,7 +20,30 @@ var ErrHistoryBusy = errors.New("history sync was requested recently; wait befor
 
 // RequestHistory asks the primary phone for the history it can share. An ack
 // means requested, not completed: actual messages arrive as HistorySync events.
-func (c *whatsmeowClient) RequestHistory(ctx context.Context) error {
+type HistoryAnchor struct {
+	JID       string `json:"jid"`
+	ID        string `json:"id"`
+	FromMe    bool   `json:"from_me"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+func ValidateHistoryAnchors(anchors []HistoryAnchor) error {
+	if len(anchors) > 32 {
+		return errors.New("too many history chats")
+	}
+	for _, anchor := range anchors {
+		jid, err := types.ParseJID(anchor.JID)
+		if err != nil || (jid.Server != types.DefaultUserServer && jid.Server != types.HiddenUserServer) || jid.User == "" || jid.Device != 0 || len(anchor.ID) == 0 || len(anchor.ID) > 256 || anchor.Timestamp <= 946684800 || anchor.Timestamp > time.Now().Unix()+300 {
+			return errors.New("invalid private history anchor")
+		}
+	}
+	return nil
+}
+
+func (c *whatsmeowClient) RequestHistory(ctx context.Context, anchors []HistoryAnchor) error {
+	if err := ValidateHistoryAnchors(anchors); err != nil {
+		return err
+	}
 	c.mu.Lock()
 	if !c.historyRequested.IsZero() && time.Since(c.historyRequested) < 5*time.Minute {
 		c.mu.Unlock()
@@ -27,8 +51,29 @@ func (c *whatsmeowClient) RequestHistory(ctx context.Context) error {
 	}
 	c.historyRequested = time.Now()
 	c.mu.Unlock()
-	_, err := c.cli.SendPeerMessage(ctx, fullHistoryRequest(string(c.cli.GenerateMessageID()), time.Now()))
-	return err
+	requested := 0
+	var lastError error
+	for _, anchor := range anchors {
+		jid, _ := types.ParseJID(anchor.JID)
+		info := &types.MessageInfo{MessageSource: types.MessageSource{Chat: jid, IsFromMe: anchor.FromMe}, ID: types.MessageID(anchor.ID), Timestamp: time.Unix(anchor.Timestamp, 0)}
+		if _, err := c.cli.SendPeerMessage(ctx, c.cli.BuildHistorySyncRequest(info, 50)); err != nil {
+			lastError = err
+			break
+		}
+		requested++
+	}
+	if ctx.Err() == nil {
+		if _, err := c.cli.SendPeerMessage(ctx, fullHistoryRequest(string(c.cli.GenerateMessageID()), time.Now())); err != nil {
+			lastError = err
+		} else {
+			requested++
+		}
+	}
+	c.logConnection("History requested (known_private_chats=%d, requests_accepted=%d)", len(anchors), requested)
+	if requested == 0 {
+		return fmt.Errorf("no history request accepted: %w", lastError)
+	}
+	return nil
 }
 
 func fullHistoryRequest(requestID string, now time.Time) *waE2E.Message {
@@ -92,9 +137,11 @@ func translateHistory(data *waHistorySync.HistorySync, parse func(types.JID, *wa
 	return
 }
 
-type historyClient interface{ RequestHistory(context.Context) error }
+type historyClient interface {
+	RequestHistory(context.Context, []HistoryAnchor) error
+}
 
-func (m *Manager) RequestHistory(ctx context.Context, id string) error {
+func (m *Manager) RequestHistory(ctx context.Context, id string, anchors []HistoryAnchor) error {
 	lv, err := m.find(id)
 	if err != nil {
 		return err
@@ -114,5 +161,5 @@ func (m *Manager) RequestHistory(ctx context.Context, id string) error {
 	if !ok {
 		return errors.New("history sync is not supported by this driver")
 	}
-	return history.RequestHistory(ctx)
+	return history.RequestHistory(ctx, anchors)
 }

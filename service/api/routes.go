@@ -131,9 +131,19 @@ func (s *Server) routes() []route {
 }
 
 func (s *Server) requestHistory(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Chats []session.HistoryAnchor `json:"chats"`
+	}
+	if r.ContentLength != 0 && !s.decode(w, r, &body) {
+		return
+	}
+	if err := session.ValidateHistoryAnchors(body.Chats); err != nil {
+		writeError(w, http.StatusBadRequest, false, "invalid private history anchors")
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	err := s.opts.Manager.RequestHistory(ctx, r.PathValue("id"))
+	err := s.opts.Manager.RequestHistory(ctx, r.PathValue("id"), body.Chats)
 	if err != nil {
 		status := http.StatusServiceUnavailable
 		if errors.Is(err, session.ErrUnknownSession) {

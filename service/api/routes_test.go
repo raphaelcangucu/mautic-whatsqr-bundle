@@ -79,7 +79,7 @@ func (c *fakeClient) Disconnect() {
 	c.disconnected = true
 }
 
-func (c *fakeClient) RequestHistory(context.Context) error {
+func (c *fakeClient) RequestHistory(context.Context, []session.HistoryAnchor) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.historyRequests++
@@ -399,6 +399,20 @@ func TestHistoryRequiresAnExistingConnectedSessionAndOnlyRequestsIt(t *testing.T
 	defer client.mu.Unlock()
 	if client.historyRequests != 1 || client.disconnected {
 		t.Fatal("history request changed the paired session")
+	}
+}
+
+func TestHistoryApiRejectsGroupsBeforeRequestingAnything(t *testing.T) {
+	h := newHarness(t)
+	client := h.openPaired("paired")
+	rec := h.do(http.MethodPost, "/sessions/paired/history", `{"chats":[{"jid":"123@g.us","id":"real","timestamp":1700000000}]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("group request %d", rec.Code)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.historyRequests != 0 {
+		t.Fatal("invalid batch reached phone")
 	}
 }
 

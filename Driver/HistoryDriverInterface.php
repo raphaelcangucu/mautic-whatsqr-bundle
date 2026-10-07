@@ -8,5 +8,5 @@ use MauticPlugin\MauticMetaBundle\Entity\MetaAsset;
 
 interface HistoryDriverInterface
 {
-    public function requestHistory(MetaAsset $asset): void;
+    public function requestHistory(MetaAsset $asset, array $anchors = []): void;
 }
