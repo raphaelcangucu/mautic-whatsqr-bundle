@@ -312,6 +312,7 @@ func TestEveryRouteRequiresTheToken(t *testing.T) {
 		"GET /sessions/{id}/media/{mediaID}": true,
 		"DELETE /sessions/{id}":              true,
 		"POST /sessions/{id}/messages":       true,
+		"POST /sessions/{id}/messages/audio": true,
 		"POST /sessions/{id}/history":        true,
 		"GET /health":                        true,
 	}

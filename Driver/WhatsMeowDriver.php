@@ -23,7 +23,7 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
  * Toda a traducao mora aqui -- o dialeto do servico entra, SessionState e SentMessage
  * saem, e nenhum "status" cru atravessa para a tela ou para a fila.
  */
-final class WhatsMeowDriver implements SessionDriverInterface, SessionProvisioningDriverInterface, ProfileImageDriverInterface, AttachmentDriverInterface, HistoryDriverInterface
+final class WhatsMeowDriver implements AudioSessionDriverInterface, SessionDriverInterface, SessionProvisioningDriverInterface, ProfileImageDriverInterface, AttachmentDriverInterface, HistoryDriverInterface
 {
     use AttachmentResponseTrait;
     /**
@@ -108,6 +108,14 @@ final class WhatsMeowDriver implements SessionDriverInterface, SessionProvisioni
         // continua no disco, e engolir isso diria que o numero foi desligado quando ele
         // ainda pode falar.
         $this->request('DELETE', sprintf('/sessions/%s', rawurlencode($this->sessionId($asset))), null, [404]);
+    }
+
+    public function sendAudio(MetaAsset $asset,string $to,string $bytes,string $requestId): SentMessage
+    {
+        if(strlen($bytes)>2097152 || substr($bytes,4,4)!=='ftyp')throw new \InvalidArgumentException('Invalid native audio.');
+        $body=$this->request('POST','/sessions/'.rawurlencode($this->sessionId($asset)).'/messages/audio',['to'=>$to,'data'=>base64_encode($bytes),'mime'=>'audio/mp4','request_id'=>$requestId],[],45);
+        $id=trim((string)($body['message_id']??''));if($id==='')throw new \RuntimeException('WhatsApp audio response has no receipt.');
+        return new SentMessage($id,$requestId);
     }
 
     public function sendText(MetaAsset $asset, string $to, string $text, string $requestId): SentMessage
@@ -250,9 +258,9 @@ final class WhatsMeowDriver implements SessionDriverInterface, SessionProvisioni
      *
      * @return array<string,mixed>
      */
-    private function request(string $method, string $path, ?array $payload = null, array $tolerate = []): array
+    private function request(string $method, string $path, ?array $payload = null, array $tolerate = [], int $timeout = self::TIMEOUT_SECONDS): array
     {
-        $options = ['auth_bearer' => $this->token, 'timeout' => self::TIMEOUT_SECONDS];
+        $options = ['auth_bearer' => $this->token, 'timeout' => $timeout, 'max_duration'=>$timeout, 'max_redirects'=>0];
         if (null !== $payload) {
             $options['json'] = $payload;
         }

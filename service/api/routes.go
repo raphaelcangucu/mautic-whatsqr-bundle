@@ -125,6 +125,7 @@ func (s *Server) routes() []route {
 		{"GET /sessions/{id}/media/{mediaID}", s.attachment},
 		{"DELETE /sessions/{id}", s.closeSession},
 		{"POST /sessions/{id}/messages", s.sendMessage},
+		{"POST /sessions/{id}/messages/audio", s.sendAudio},
 		{"POST /sessions/{id}/history", s.requestHistory},
 		{"GET /health", s.health},
 	}

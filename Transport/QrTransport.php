@@ -46,7 +46,7 @@ final class QrTransport implements WhatsAppTransportInterface
      * endereco do ultimo numero configurado. A fabrica resolve isso em tempo de execucao,
      * um adaptador por asset, com as credenciais daquele asset.
      */
-    public function __construct(private readonly SessionDriverFactory $drivers)
+    public function __construct(private readonly SessionDriverFactory $drivers, private readonly ?\MauticPlugin\MauticInboxBundle\Application\Mobile\AudioStore $audioStore = null)
     {
     }
 
@@ -58,6 +58,16 @@ final class QrTransport implements WhatsAppTransportInterface
     public function post(MetaAsset $asset, array $payload): array
     {
         $type = trim((string) ($payload['type'] ?? ''));
+        if($type==='audio'){
+            $mediaId=$payload['audio']['id']??'';
+            if(!is_string($mediaId)||!preg_match('/^inbox-audio:([a-f0-9]{32})$/D',$mediaId,$match)||!$this->audioStore)throw new \DomainException('Audio must be uploaded through the scoped Inbox API.');
+            $record=$this->audioStore->record($match[1]);if($record['asset']!==(int)$asset->getId())throw new \DomainException('Audio belongs to another WhatsApp number.');
+            $driver=$this->drivers->forAsset($asset);if(!$driver instanceof \MauticPlugin\MauticWhatsQrBundle\Driver\AudioSessionDriverInterface)throw new \DomainException('This QR driver does not support audio.');
+            $to=trim((string)($payload['to']??''));if($to==='')throw new \InvalidArgumentException('Audio recipient required.');
+            $sent=$driver->sendAudio($asset,$to,(string)file_get_contents($record['file']),'audio-'.substr(hash('sha256',$asset->getExternalId()."\0".$to."\0".$record['request_id']),0,32));
+            return ['messages'=>[['id'=>$sent->messageId]],'request_id'=>$sent->requestId];
+        }
+
         $this->assertTypeCanLeaveThisChannel($type);
 
         $to = trim((string) ($payload['to'] ?? ''));

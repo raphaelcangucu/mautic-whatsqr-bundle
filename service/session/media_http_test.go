@@ -31,3 +31,38 @@ func TestAttachmentHTTPRestrictsDestinationsRedirectsAndSize(t *testing.T) {
 		t.Fatal("redirects allowed")
 	}
 }
+
+func TestAudioUploadHTTPAllowsOnlyBoundedWhatsAppAudio(t *testing.T) {
+	hash := strings.Repeat("a", 43) + "="
+	endpoint := "https://mmg.whatsapp.net/mms/audio/" + hash + "?auth=fixture&token=" + hash
+	calls := 0
+	transport := mediaTransport{mediaRoundTrip(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 200, ContentLength: 2, Body: io.NopCloser(strings.NewReader("{}"))}, nil
+	})}
+	req, _ := http.NewRequest("POST", endpoint, strings.NewReader("encrypted audio"))
+	if _, err := transport.RoundTrip(req); err != nil || calls != 1 {
+		t.Fatal("native audio upload refused", err)
+	}
+	for _, raw := range []string{strings.Replace(endpoint, "https:", "http:", 1), strings.Replace(endpoint, "mmg.whatsapp.net", "mmg.whatsapp.net.attacker.test", 1), strings.Replace(endpoint, "mmg.whatsapp.net", "cdn.fbcdn.net", 1), strings.Replace(endpoint, "/mms/audio/", "/private/", 1), strings.Replace(endpoint, "auth=fixture", "auth=", 1), strings.Replace(endpoint, "token="+hash, "token=wrong", 1)} {
+		bad, _ := http.NewRequest("POST", raw, strings.NewReader("encrypted audio"))
+		if _, err := transport.RoundTrip(bad); !errors.Is(err, media.ErrUnsafe) {
+			t.Fatal("unsafe audio upload accepted")
+		}
+	}
+	for _, size := range []int64{-1, 0, 2097152 + 33} {
+		bad := req.Clone(req.Context())
+		bad.ContentLength = size
+		if _, err := transport.RoundTrip(bad); !errors.Is(err, media.ErrUnsafe) {
+			t.Fatal("invalid upload length accepted")
+		}
+	}
+	bad := req.Clone(req.Context())
+	bad.Method = "PUT"
+	if _, err := transport.RoundTrip(bad); !errors.Is(err, media.ErrUnsafe) {
+		t.Fatal("unexpected method accepted")
+	}
+	if calls != 1 {
+		t.Fatal("rejected request reached network")
+	}
+}
