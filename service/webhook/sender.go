@@ -477,15 +477,17 @@ type payload struct {
 }
 
 type inboundBody struct {
-	ID          string              `json:"id"`
-	From        string              `json:"from"`
-	FromMe      bool                `json:"from_me,omitempty"`
-	Historical  bool                `json:"historical,omitempty"`
-	Name        string              `json:"name,omitempty"`
-	Text        string              `json:"text"`
-	Timestamp   int64               `json:"timestamp"`
-	Unsupported bool                `json:"unsupported"`
-	Attachment  *session.Attachment `json:"attachment,omitempty"`
+	ID                string              `json:"id"`
+	From              string              `json:"from"`
+	FromMe            bool                `json:"from_me,omitempty"`
+	Historical        bool                `json:"historical,omitempty"`
+	Name              string              `json:"name,omitempty"`
+	Text              string              `json:"text"`
+	Timestamp         int64               `json:"timestamp"`
+	Unsupported       bool                `json:"unsupported"`
+	ContentType       string              `json:"content_type,omitempty"`
+	UnsupportedReason string              `json:"unsupported_reason,omitempty"`
+	Attachment        *session.Attachment `json:"attachment,omitempty"`
 }
 
 type statusBody struct {
@@ -517,15 +519,17 @@ func newEvent(n session.Notice) (*event, error) {
 			return nil, errors.New("aviso de mensagem sem mensagem")
 		}
 		body.Message = &inboundBody{
-			ID:          n.Message.ID,
-			From:        n.Message.From,
-			FromMe:      n.Message.FromMe,
-			Historical:  n.Message.Historical,
-			Name:        n.Message.Name,
-			Text:        n.Message.Text,
-			Timestamp:   n.Message.Timestamp.Unix(),
-			Unsupported: n.Message.Unsupported,
-			Attachment:  n.Message.Attachment,
+			ID:                n.Message.ID,
+			From:              n.Message.From,
+			FromMe:            n.Message.FromMe,
+			Historical:        n.Message.Historical,
+			Name:              n.Message.Name,
+			Text:              n.Message.Text,
+			Timestamp:         n.Message.Timestamp.Unix(),
+			Unsupported:       n.Message.Unsupported,
+			ContentType:       n.Message.ContentType,
+			UnsupportedReason: n.Message.UnsupportedReason,
+			Attachment:        n.Message.Attachment,
 		}
 	case session.NoticeStatus:
 		if n.Delivery == nil {

@@ -19,6 +19,8 @@ use MauticPlugin\MauticMetaBundle\Entity\MetaMessageRepository;
 use MauticPlugin\MauticWhatsQrBundle\Domain\InboundJid;
 use MauticPlugin\MauticWhatsQrBundle\Domain\AttachmentReference;
 use MauticPlugin\MauticWhatsQrBundle\Domain\WebhookEventType;
+use MauticPlugin\MauticWhatsQrBundle\Domain\MessageContent;
+use MauticPlugin\MauticWhatsQrBundle\Domain\MessageContentRecovery;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -126,9 +128,7 @@ final class InboundIngestor
         // can appear on both paired accounts, while meta_messages has a global
         // unique ID. Also recognize legacy raw IDs (including Inbox API sends).
         $scopedId = 'qr:'.hash('sha256', $asset->getExternalId()."\0".$externalId);
-        if ($this->messages->findOneBy(['asset' => $asset, 'externalId' => [$externalId, $scopedId]]) instanceof MetaMessage) {
-            return null;
-        }
+        $existing = $this->messages->findOneBy(['asset' => $asset, 'externalId' => [$externalId, $scopedId]]);
 
         try {
             $jid = new InboundJid((string) ($inbound['from'] ?? ''));
@@ -153,6 +153,18 @@ final class InboundIngestor
             throw new \RuntimeException('WhatsApp history recorder is unavailable.');
         }
 
+        if ($existing instanceof MetaMessage) {
+            if (MessageContentRecovery::apply($existing, $asset, $inbound, $recipient, $fromMe)) {
+                // A retry/history repair updates the same row silently. No consent,
+                // bots, push notifications, reply window or assignment changes.
+                $this->entityManager->persist($existing);
+                $this->entityManager->flush();
+                $this->history?->refreshContent($existing);
+                return $existing;
+            }
+            return null;
+        }
+
         // Sem telefone nao ha o que casar com contato: a busca do Meta bundle compara
         // digitos com `mobile` e `phone`, e os digitos de um identificador de privacidade
         // casariam com quem tivesse a mesma sequencia por acaso.
@@ -161,14 +173,20 @@ final class InboundIngestor
         // customer activity and must not reopen consent or the inbound window.
         $identity = $fromMe || $historical ? null : $this->identities->registerInteraction($asset, $recipient, null, $contact);
 
-        $unsupported = true === ($inbound['unsupported'] ?? false);
-        $attachment = AttachmentReference::fromInbound($inbound);
+        $contentType = MessageContent::type($inbound);
+        $reason = MessageContent::reason($inbound);
+        $unsupported = true === ($inbound['unsupported'] ?? false) || 'view_once' === $reason;
+        $attachment = 'view_once' === $reason ? null : AttachmentReference::fromInbound($inbound);
         if (null !== $attachment) {
             $unsupported = false;
             $payload['message'][$attachment->type] = ['id' => $attachment->id, 'filename' => $attachment->filename, 'caption' => (string) ($inbound['text'] ?? ''), 'file_size' => $attachment->size];
         }
-        $text = (string) ($inbound['text'] ?? '');
-        $keyword = $fromMe || $historical || $unsupported ? null : $this->keywords->match($text);
+        $text = 'view_once' === $reason ? '' : (string) ($inbound['text'] ?? '');
+        if ('view_once' === $reason) {
+            $payload['message']['text'] = ''; unset($payload['message']['attachment']);
+            foreach (AttachmentReference::TYPES as $mediaType) { unset($payload['message'][$mediaType]); }
+        }
+        $keyword = $fromMe || $historical || $unsupported || in_array($contentType, MessageContent::SUMMARIES, true) ? null : $this->keywords->match($text);
         if ('opt_in' === $keyword) {
             $this->identities->optIn($identity, 'whatsapp_keyword');
         }
@@ -189,6 +207,8 @@ final class InboundIngestor
             'consent_keyword' => $keyword,
             'sent_from_device' => $fromMe,
             'historical' => $historical,
+            'content_type' => $attachment?->type ?? $contentType,
+            'unsupported_reason' => $reason,
         ];
 
         $message = (new MetaMessage())
@@ -200,7 +220,7 @@ final class InboundIngestor
             ->setChannel('whatsapp')
             ->setDirection($fromMe ? 'outbound' : 'inbound')
             // QR attachments use the private service, never the official Graph transport.
-            ->setMessageType($attachment?->type ?? ($unsupported ? 'unsupported' : 'text'))
+            ->setMessageType($attachment?->type ?? ($unsupported ? 'unsupported' : (in_array($contentType, MessageContent::SUMMARIES, true) ? $contentType : 'text')))
             ->setContact($identity?->getContact() ?? $contact)
             ->setRecipient($recipient)
             // O corpo fica como chegou: e o unico registro do que o WhatsApp entregou.

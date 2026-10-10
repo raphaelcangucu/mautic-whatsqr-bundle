@@ -197,3 +197,7 @@ Eventos `HistorySync` importam ambas as direções com as datas originais, recon
 O histórico usa uma fila persistente separada em `<store_path>.history`, diretório `0700` e arquivos `0600`, sem tokens ou chaves de mídia. A fila só remove um item após confirmação do Mautic, sobrevive a reinícios e prioriza mensagens novas. O processamento é serial e limitado para reduzir carga no Mautic. Limites: 128 MiB de fila, 128 KiB por evento, solicitação de até 365 dias/64 MiB, e intervalo mínimo de cinco minutos entre solicitações. Falhas de entrega preservam o item para nova tentativa. Mensagens fora do intervalo ou não disponibilizadas pelo telefone não são apresentadas como recuperadas.
 
 A integração opcional com `MauticInboxBundle` cria o estado silencioso das conversas importadas. Nenhum schema novo é necessário: são reutilizadas as entidades de conversa, mensagem e estado existentes. Os testes de regressão são locais e usam repositórios/conexões simulados; os testes Go usam diretórios temporários, nunca a base ou o armazenamento pareado de produção.
+
+## Conteúdo sincronizado
+
+O conector interpreta contatos, localização, enquetes, respostas interativas e vídeos circulares, além de texto e anexos. Mensagens incompletas podem ser enriquecidas pelo histórico sem duplicar a conversa. Mídias de visualização única não são arquivadas. Consulte [os formatos, a recuperação e as proteções](docs/message-content-recovery.md).
