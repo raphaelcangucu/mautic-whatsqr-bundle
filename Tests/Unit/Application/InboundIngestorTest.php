@@ -21,6 +21,48 @@ final class InboundIngestorTest extends TestCase
 {
     use InboundIngestorFixture;
 
+    public function testHistoryCanRepairUnsupportedContentWithoutDuplicatingOrChangingConversationState(): void
+    {
+        $asset = $this->qrAsset();
+        $ingestor = $this->inboundIngestor();
+        $event = $this->messageEvent('5511999999999@s.whatsapp.net', '', true, 'INCOMPLETE');
+        $event['message']['from_me'] = true;
+        $first = $ingestor->ingest($asset, $event);
+        $conversation = $first->getConversation();
+        $date = $first->getDateAdded();
+        $lastMessage = $conversation->getLastMessageAt();
+        $lastInbound = $conversation->getLastInboundAt();
+        $conversation->setStatus('resolved');
+        $this->identityCalls = $this->inboxCalls = [];
+        $event['message']['text'] = 'SAIR';
+        $event['message']['unsupported'] = false;
+        $event['message']['historical'] = true;
+        $event['message']['content_type'] = 'contact';
+        $event['message']['timestamp'] = time() - 1000;
+        $repaired = $ingestor->ingest($asset, $event);
+        self::assertSame($first, $repaired);
+        self::assertSame('contact', $first->getMessageType());
+        self::assertSame($date, $first->getDateAdded());
+        self::assertSame($lastMessage, $conversation->getLastMessageAt());
+        self::assertSame($lastInbound, $conversation->getLastInboundAt());
+        self::assertSame('resolved', $conversation->getStatus());
+        self::assertSame(0, $conversation->getUnreadCount());
+        self::assertSame([], $this->identityCalls);
+        self::assertSame([], $this->inboxCalls);
+        self::assertNull($first->getPayload()['whatsqr']['consent_keyword']);
+        self::assertNull($ingestor->ingest($asset, $event));
+        self::assertCount(1, $this->messageRows);
+    }
+
+    public function testSharedContactCannotTriggerConsentKeywords(): void
+    {
+        $event = $this->messageEvent('5511999999999@s.whatsapp.net', 'SAIR');
+        $event['message']['content_type'] = 'contact';
+        $message = $this->inboundIngestor()->ingest($this->qrAsset(), $event);
+        self::assertSame('contact', $message->getMessageType());
+        self::assertNull($message->getPayload()['whatsqr']['consent_keyword']);
+    }
+
     public function testPhoneReplyIsOutboundAndDoesNotCreateCustomerActivityOrRunAutomation(): void
     {
         $asset = $this->qrAsset();

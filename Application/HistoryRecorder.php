@@ -47,6 +47,12 @@ final class HistoryRecorder
         });
     }
 
+    public function refreshContent(MetaMessage $message): void
+    {
+        // Preserve the existing Inbox state and wake incremental SSE only.
+        $this->inbox?->record($message);
+    }
+
     public function recordDeviceReply(MetaMessage $message): void
     {
         $this->inbox?->recordDeviceReply($message);

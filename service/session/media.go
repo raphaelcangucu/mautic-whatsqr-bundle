@@ -73,6 +73,8 @@ func mediaPart(evt *events.Message) (downloadable, string, string, string) {
 		return m.ImageMessage, "image", "", m.ImageMessage.GetCaption()
 	case m.VideoMessage != nil:
 		return m.VideoMessage, "video", "", m.VideoMessage.GetCaption()
+	case m.PtvMessage != nil:
+		return m.PtvMessage, "video", "", m.PtvMessage.GetCaption()
 	case m.AudioMessage != nil:
 		return m.AudioMessage, "audio", "", ""
 	case m.DocumentMessage != nil:
@@ -114,6 +116,8 @@ func (c *whatsmeowClient) captureMedia(evt *events.Message, inbound *Inbound) {
 	}
 	inbound.Text = caption
 	inbound.Unsupported = false
+	inbound.ContentType = kind
+	inbound.UnsupportedReason = ""
 	a := &Attachment{Type: kind, Name: cleanFilename(name), MIME: part.GetMimetype(), Size: part.GetFileLength()}
 	inbound.Attachment = a
 	if _, _, err := mime.ParseMediaType(a.MIME); a.MIME != "" && (err != nil || len(a.MIME) > 256) {

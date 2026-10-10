@@ -313,6 +313,7 @@ func TestEveryRouteRequiresTheToken(t *testing.T) {
 		"DELETE /sessions/{id}":              true,
 		"POST /sessions/{id}/messages":       true,
 		"POST /sessions/{id}/history":        true,
+		"POST /sessions/{id}/recover":        true,
 		"GET /health":                        true,
 	}
 	routes := h.server.routes()
@@ -882,5 +883,30 @@ func TestDeletingTheRefusedSessionClearsTheDiskAndTheScreen(t *testing.T) {
 	decode(t, rec, &got)
 	if len(got.Sessions) != 0 {
 		t.Fatalf("health = %+v, esperava vazio depois do DELETE", got.Sessions)
+	}
+}
+
+func (c *fakeClient) RequestMessage(context.Context, session.HistoryAnchor) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.historyRequests++
+	return nil
+}
+
+func TestContentRecoveryApiRejectsGroupsAndOnlyRequestsOnePrivateMessage(t *testing.T) {
+	h := newHarness(t)
+	client := h.openPaired("paired")
+	for _, bad := range []string{`{}`, `{"jid":"123@g.us","id":"original","timestamp":1700000000}`, `{"jid":"123@s.whatsapp.net","id":"original","timestamp":1700000000,"raw":"secret"}`} {
+		if rec := h.do(http.MethodPost, "/sessions/paired/recover", bad); rec.Code != http.StatusBadRequest {
+			t.Fatalf("invalid recovery status %d", rec.Code)
+		}
+	}
+	if rec := h.do(http.MethodPost, "/sessions/paired/recover", `{"jid":"5511999999999@s.whatsapp.net","id":"original","from_me":true,"timestamp":1700000000}`); rec.Code != http.StatusAccepted {
+		t.Fatalf("private recovery status %d", rec.Code)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.historyRequests != 1 || client.disconnected {
+		t.Fatal("recovery changed the paired session or sent more requests")
 	}
 }
