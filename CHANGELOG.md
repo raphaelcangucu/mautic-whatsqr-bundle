@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1 - 2026-11-04
+
+- Decodifica e recupera com segurança o conteúdo incompleto de mensagens WhatsApp QR (PR #3). Produção já rodava esta correção desde 2026-10-10.
+- Inclui o envio nativo de áudio da 0.4.0.
+
 ## 0.3.2 - 2026-10-07
 
 - Sincroniza respostas privadas enviadas pelo celular ou outro dispositivo, excluindo grupos, broadcasts e newsletters.
