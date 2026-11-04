@@ -127,6 +127,7 @@ func (s *Server) routes() []route {
 		{"POST /sessions/{id}/messages", s.sendMessage},
 		{"POST /sessions/{id}/messages/audio", s.sendAudio},
 		{"POST /sessions/{id}/history", s.requestHistory},
+		{"POST /sessions/{id}/recover", s.recoverMessage},
 		{"GET /health", s.health},
 	}
 }

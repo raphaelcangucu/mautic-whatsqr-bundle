@@ -631,7 +631,7 @@ func (c *whatsmeowClient) translate(raw any) {
 		}
 		if msg := translateMessage(evt); msg != nil {
 			c.captureMedia(evt, msg)
-			c.logConnection("Private message accepted (from_me=%t, unsupported=%t)", msg.FromMe, msg.Unsupported)
+			c.logConnection("Private message accepted (from_me=%t, content_type=%s, unsupported=%t)", msg.FromMe, msg.ContentType, msg.Unsupported)
 			c.emit(Event{Kind: EventMessage, Message: msg})
 		}
 
@@ -678,10 +678,7 @@ func translateMessage(evt *events.Message) *Inbound {
 		return nil
 	}
 
-	text := m.GetConversation()
-	if text == "" {
-		text = m.GetExtendedTextMessage().GetText()
-	}
+	text, kind, reason := messageContent(evt)
 	sender := evt.Info.Sender.ToNonAD()
 	name := evt.Info.PushName
 	alternate := evt.Info.SenderAlt
@@ -701,14 +698,14 @@ func translateMessage(evt *events.Message) *Inbound {
 		return nil
 	}
 	return &Inbound{
-		ID:     evt.Info.ID,
-		From:   sender.String(),
-		FromMe: evt.Info.IsFromMe,
-		Name:   name,
-		Text:   text,
-		// Midia nao entra nesta etapa, mas tem que aparecer: o cliente
-		// manda a foto do boleto e escreve "e esse aqui", e sem a marca o
-		// atendente le so o "e esse aqui".
+		ID:                evt.Info.ID,
+		From:              sender.String(),
+		FromMe:            evt.Info.IsFromMe,
+		Name:              name,
+		Text:              text,
+		ContentType:       kind,
+		UnsupportedReason: reason,
+		// Media is captured separately through the bounded private store.
 		Unsupported: text == "",
 		Timestamp:   evt.Info.Timestamp,
 	}

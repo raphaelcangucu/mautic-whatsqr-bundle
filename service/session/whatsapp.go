@@ -69,14 +69,16 @@ type Event struct {
 
 // Inbound e uma mensagem que chegou, ja sem o formato da biblioteca.
 type Inbound struct {
-	ID         string
-	From       string // Conversation peer JID (recipient when FromMe is true)
-	FromMe     bool   // Mirrored message sent on the phone or another linked device
-	Historical bool   // Imported history: no customer notifications or automation
-	Name       string // Display name supplied by WhatsApp
-	Text       string
-	Timestamp  time.Time
-	Attachment *Attachment
+	ID                string
+	From              string // Conversation peer JID (recipient when FromMe is true)
+	FromMe            bool   // Mirrored message sent on the phone or another linked device
+	Historical        bool   // Imported history: no customer notifications or automation
+	Name              string // Display name supplied by WhatsApp
+	Text              string
+	ContentType       string // Fixed content classification, not a raw protobuf name.
+	UnsupportedReason string // view_once or unsupported_type; no private payload.
+	Timestamp         time.Time
+	Attachment        *Attachment
 	// Unsupported marca o que chegou e nao vira texto -- midia, sobretudo.
 	// O desenho manda mostrar na caixa que veio alguma coisa e nao deu de
 	// ler: o cliente manda a foto do boleto e escreve "e esse aqui", e sem
